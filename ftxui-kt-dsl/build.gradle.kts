@@ -29,5 +29,12 @@ kotlin {
                 }
             }
         }
+        compilations.getByName("test") {
+            defaultSourceSet {
+                dependencies {
+                    implementation(kotlin("test"))
+                }
+            }
+        }
     }
 }
