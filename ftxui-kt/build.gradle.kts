@@ -33,11 +33,9 @@ val downloadFtxuiC = tasks.register("downloadFtxuiC") {
     doFirst { nativeDir.get().asFile.mkdirs() }
     doLast {
         val dest = archiveFile.get().asFile
-        if (!dest.exists()) {
-            val url = "https://github.com/nassendelft/ftxui-c/releases/download/$ftxuiCVersion/$archiveName"
-            logger.lifecycle("Downloading $url")
-            URI(url).toURL().openStream().use { input -> dest.outputStream().use { input.copyTo(it) } }
-        }
+        val url = "https://github.com/nassendelft/ftxui-c/releases/download/$ftxuiCVersion/$archiveName"
+        logger.lifecycle("Downloading $url")
+        URI(url).toURL().openStream().use { input -> dest.outputStream().use { input.copyTo(it) } }
     }
 }
 
@@ -45,7 +43,7 @@ val extractFtxuiC = tasks.register<Exec>("extractFtxuiC") {
     dependsOn(downloadFtxuiC)
     inputs.file(archiveFile)
     outputs.dir(nativeDir.map { it.dir("lib") })
-    commandLine("bash", "-c", "tar -xzf ${archiveFile.get().asFile.absolutePath} -C ${nativeDir.get().asFile.absolutePath}")
+    commandLine("tar", "-xzf", archiveFile.get().asFile.absolutePath, "-C", nativeDir.get().asFile.absolutePath)
 }
 
 kotlin {
