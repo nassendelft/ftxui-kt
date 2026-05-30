@@ -124,8 +124,40 @@ fun Element.destroy() = ftxui_element_destroy(handle)
 
 data class Dimensions(val dimx: Int, val dimy: Int)
 
+enum class TerminalColor(internal val value: UInt) {
+    Palette1(FTXUI_TERMINAL_COLOR_PALETTE1),
+    Palette16(FTXUI_TERMINAL_COLOR_PALETTE16),
+    Palette256(FTXUI_TERMINAL_COLOR_PALETTE256),
+    TrueColor(FTXUI_TERMINAL_COLOR_TRUE_COLOR),
+}
+
+data class Quirks(
+    val blockCharacters: Boolean = false,
+    val cursorHiding: Boolean = true,
+    val componentAscii: Boolean = false,
+    val colorSupport: TerminalColor = TerminalColor.TrueColor,
+)
+
 object Terminal {
     fun size(): Dimensions = Dimensions(ftxui_terminal_width(), ftxui_terminal_height())
+    fun setFallbackSize(width: Int, height: Int) = ftxui_terminal_set_fallback_size(width, height)
+    fun colorSupport(): TerminalColor =
+        TerminalColor.entries.first { it.value == ftxui_terminal_color_support() }
+    fun setColorSupport(color: TerminalColor) = ftxui_terminal_set_color_support(color.value)
+    fun getQuirks(): Quirks = ftxui_terminal_get_quirks().useContents {
+        Quirks(
+            blockCharacters = block_characters,
+            cursorHiding = cursor_hiding,
+            componentAscii = component_ascii,
+            colorSupport = TerminalColor.entries.first { it.value == color_support },
+        )
+    }
+    fun setQuirks(quirks: Quirks) = ftxui_terminal_set_quirks(cValue<ftxui_quirks_t> {
+        block_characters = quirks.blockCharacters
+        cursor_hiding = quirks.cursorHiding
+        component_ascii = quirks.componentAscii
+        color_support = quirks.colorSupport.value
+    })
 }
 
 class FtxUIApp internal constructor(internal val handle: ftxui_app_handle_t) {
@@ -143,6 +175,30 @@ class FtxUIApp internal constructor(internal val handle: ftxui_app_handle_t) {
 
     fun exitClosure(): () -> Unit = { exit() }
 
+    fun trackMouse(enable: Boolean = true) = ftxui_app_track_mouse(handle, enable)
+    fun handlePipedInput(enable: Boolean = true) = ftxui_app_handle_piped_input(handle, enable)
+    fun forceHandleCtrlC(force: Boolean = true) = ftxui_app_force_handle_ctrl_c(handle, force)
+    fun forceHandleCtrlZ(force: Boolean = true) = ftxui_app_force_handle_ctrl_z(handle, force)
+
+    fun post(closure: () -> Unit) {
+        val stableRef = StableRef.create(closure)
+        val cb = staticCFunction { refPtr: COpaquePointer? ->
+            val fn = refPtr!!.asStableRef<() -> Unit>().get()
+            fn()
+            refPtr.asStableRef<() -> Unit>().dispose()
+        }
+        ftxui_app_post(handle, cb, stableRef.asCPointer())
+    }
+
+    fun withRestoredIO(closure: () -> Unit) {
+        val stableRef = StableRef.create(closure)
+        val cb = staticCFunction { refPtr: COpaquePointer? ->
+            refPtr!!.asStableRef<() -> Unit>().get()()
+        }
+        ftxui_app_with_restored_io(handle, cb, stableRef.asCPointer())
+        stableRef.dispose()
+    }
+
     fun selectionChange(callback: () -> Unit) {
         val stableRef = StableRef.create(callback)
         val c = staticCFunction { refPtr: COpaquePointer? ->
@@ -159,10 +215,24 @@ class FtxUIApp internal constructor(internal val handle: ftxui_app_handle_t) {
         return result
     }
 
+    fun terminalName(): String = ftxui_app_terminal_name(handle)?.toKString() ?: ""
+    fun terminalVersion(): Int = ftxui_app_terminal_version(handle)
+    fun terminalEmulatorName(): String = ftxui_app_terminal_emulator_name(handle)?.toKString() ?: ""
+    fun terminalEmulatorVersion(): String = ftxui_app_terminal_emulator_version(handle)?.toKString() ?: ""
+    fun terminalCapabilities(): List<Int> = memScoped {
+        val count = alloc<IntVar>()
+        val ptr = ftxui_app_terminal_capabilities(handle, count.ptr) ?: return emptyList()
+        (0 until count.value).map { ptr[it] }
+    }
+
     companion object {
         fun fullscreen() = FtxUIApp(ftxui_app_create_fullscreen()!!)
+        fun fullscreenPrimaryScreen() = FtxUIApp(ftxui_app_create_fullscreen_primary_screen()!!)
+        fun fullscreenAlternateScreen() = FtxUIApp(ftxui_app_create_fullscreen_alternate_screen()!!)
         fun fitComponent() = FtxUIApp(ftxui_app_create_fit_component()!!)
         fun terminalOutput() = FtxUIApp(ftxui_app_create_terminal_output()!!)
+        fun fixedSize(dimx: Int, dimy: Int) = FtxUIApp(ftxui_app_create_fixed_size(dimx, dimy)!!)
+        fun active(): FtxUIApp? = ftxui_app_active()?.let { FtxUIApp(it) }
     }
 }
 
@@ -475,14 +545,55 @@ fun Component.decorateRender(transform: (Element) -> Element): Component {
     }
 }
 
+enum class MouseButton(internal val value: UInt) {
+    Left(FTXUI_MOUSE_BUTTON_LEFT),
+    Middle(FTXUI_MOUSE_BUTTON_MIDDLE),
+    Right(FTXUI_MOUSE_BUTTON_RIGHT),
+    None(FTXUI_MOUSE_BUTTON_NONE),
+    WheelUp(FTXUI_MOUSE_BUTTON_WHEEL_UP),
+    WheelDown(FTXUI_MOUSE_BUTTON_WHEEL_DOWN),
+    WheelLeft(FTXUI_MOUSE_BUTTON_WHEEL_LEFT),
+    WheelRight(FTXUI_MOUSE_BUTTON_WHEEL_RIGHT),
+}
+
+enum class MouseMotion(internal val value: UInt) {
+    Released(FTXUI_MOUSE_MOTION_RELEASED),
+    Pressed(FTXUI_MOUSE_MOTION_PRESSED),
+    Moved(FTXUI_MOUSE_MOTION_MOVED),
+}
+
 data class FtxUIEvent(
     val input: String,
     val debugString: String,
     val isCharacter: Boolean,
     val character: String,
+    // Mouse
     val isMouse: Boolean,
     val mouseX: Int = 0,
     val mouseY: Int = 0,
+    val mouseButton: MouseButton = MouseButton.None,
+    val mouseMotion: MouseMotion = MouseMotion.Released,
+    val mouseShift: Boolean = false,
+    val mouseMeta: Boolean = false,
+    val mouseControl: Boolean = false,
+    // Cursor position report
+    val isCursorPosition: Boolean = false,
+    val cursorX: Int = 0,
+    val cursorY: Int = 0,
+    // Cursor shape report
+    val isCursorShape: Boolean = false,
+    val cursorShape: Int = 0,
+    // Terminal name/version
+    val isTerminalNameVersion: Boolean = false,
+    val terminalName: String = "",
+    val terminalVersion: Int = 0,
+    // Terminal emulator
+    val isTerminalEmulator: Boolean = false,
+    val terminalEmulatorName: String = "",
+    val terminalEmulatorVersion: String = "",
+    // Terminal capabilities
+    val isTerminalCapabilities: Boolean = false,
+    val terminalCapabilities: List<Int> = emptyList(),
 ) {
     fun isKey(key: String): Boolean = input == key
 }
@@ -617,6 +728,16 @@ fun Component.catchEvent(handler: (FtxUIEvent) -> Boolean): Component {
     val callback = staticCFunction { eventHandle: ftxui_event_handle_t?, refPtr: COpaquePointer? ->
         val block = refPtr!!.asStableRef<(FtxUIEvent) -> Boolean>().get()
         val isMouse = ftxui_event_is_mouse(eventHandle)
+        val isCursorPos = ftxui_event_is_cursor_position(eventHandle)
+        val isCursorShape = ftxui_event_is_cursor_shape(eventHandle)
+        val isTermNameVer = ftxui_event_is_terminal_name_version(eventHandle)
+        val isTermEmulator = ftxui_event_is_terminal_emulator(eventHandle)
+        val isTermCaps = ftxui_event_is_terminal_capabilities(eventHandle)
+        val termCaps: List<Int> = if (isTermCaps) memScoped {
+            val count = alloc<IntVar>()
+            val ptr = ftxui_event_terminal_capabilities(eventHandle, count.ptr)
+            if (ptr != null) (0 until count.value).map { ptr[it] } else emptyList()
+        } else emptyList()
         val e = FtxUIEvent(
             input = ftxui_event_input(eventHandle)?.toKString() ?: "",
             debugString = ftxui_event_debug_string(eventHandle)?.toKString() ?: "",
@@ -625,6 +746,24 @@ fun Component.catchEvent(handler: (FtxUIEvent) -> Boolean): Component {
             isMouse = isMouse,
             mouseX = if (isMouse) ftxui_event_mouse_x(eventHandle) else 0,
             mouseY = if (isMouse) ftxui_event_mouse_y(eventHandle) else 0,
+            mouseButton = if (isMouse) MouseButton.entries.first { it.value == ftxui_event_mouse_button(eventHandle) } else MouseButton.None,
+            mouseMotion = if (isMouse) MouseMotion.entries.first { it.value == ftxui_event_mouse_motion(eventHandle) } else MouseMotion.Released,
+            mouseShift = isMouse && ftxui_event_mouse_shift(eventHandle),
+            mouseMeta = isMouse && ftxui_event_mouse_meta(eventHandle),
+            mouseControl = isMouse && ftxui_event_mouse_control(eventHandle),
+            isCursorPosition = isCursorPos,
+            cursorX = if (isCursorPos) ftxui_event_cursor_x(eventHandle) else 0,
+            cursorY = if (isCursorPos) ftxui_event_cursor_y(eventHandle) else 0,
+            isCursorShape = isCursorShape,
+            cursorShape = if (isCursorShape) ftxui_event_cursor_shape(eventHandle) else 0,
+            isTerminalNameVersion = isTermNameVer,
+            terminalName = if (isTermNameVer) ftxui_event_terminal_name(eventHandle)?.toKString() ?: "" else "",
+            terminalVersion = if (isTermNameVer) ftxui_event_terminal_version(eventHandle) else 0,
+            isTerminalEmulator = isTermEmulator,
+            terminalEmulatorName = if (isTermEmulator) ftxui_event_terminal_emulator_name(eventHandle)?.toKString() ?: "" else "",
+            terminalEmulatorVersion = if (isTermEmulator) ftxui_event_terminal_emulator_version(eventHandle)?.toKString() ?: "" else "",
+            isTerminalCapabilities = isTermCaps,
+            terminalCapabilities = termCaps,
         )
         block(e)
     }
@@ -727,6 +866,22 @@ fun Component.alignRight() = wrapOwning(ftxui_component_align_right(handle)!!)
 fun Component.nothing() = wrapOwning(ftxui_component_nothing(handle)!!)
 fun Component.hoverable(hover: BoolState) = wrapOwning(ftxui_component_hoverable(handle, hover.ptr)!!)
 
+fun Component.hoverable(onEnter: () -> Unit, onLeave: () -> Unit): Component {
+    val enterRef = StableRef.create(onEnter)
+    val leaveRef = StableRef.create(onLeave)
+    return wrapOwning(ftxui_component_hoverable_callbacks(handle, callbackBridge, enterRef.asCPointer(), callbackBridge, leaveRef.asCPointer())!!).also {
+        it.cleanups.add { enterRef.dispose() }
+        it.cleanups.add { leaveRef.dispose() }
+    }
+}
+
+fun Component.hoverable(onChange: (Boolean) -> Unit): Component {
+    val ref = StableRef.create(onChange)
+    return wrapOwning(ftxui_component_hoverable_change(handle, hoverChangeBridge, ref.asCPointer())!!).also {
+        it.cleanups.add { ref.dispose() }
+    }
+}
+
 // -- State holders
 // Native-heap-backed mutable values for interactive components.
 // Call free() when the associated component is destroyed.
@@ -775,8 +930,45 @@ fun input(content: StringState, placeholder: String = ""): Component =
 fun inputPassword(content: StringState, placeholder: String = ""): Component =
     Component(ftxui_component_input_password(content.ptr, placeholder)!!)
 
+class InputOptions(
+    val content: StringState? = null,
+    val placeholder: String? = null,
+    val multiline: BoolState? = null,
+    val insert: BoolState? = null,
+    val cursorPosition: IntState? = null,
+    val onChange: (() -> Unit)? = null,
+    val onEnter: (() -> Unit)? = null,
+)
+
+fun input(options: InputOptions): Component = memScoped {
+    val changeRef = options.onChange?.let { StableRef.create(it) }
+    val enterRef = options.onEnter?.let { StableRef.create(it) }
+    val opts = cValue<ftxui_input_options_t> {
+        this.content = options.content?.ptr
+        this.placeholder = options.placeholder?.cstr?.getPointer(this@memScoped)
+        this.multiline = options.multiline?.ptr
+        this.insert = options.insert?.ptr
+        this.cursor_position = options.cursorPosition?.ptr
+        this.on_change = if (changeRef != null) callbackBridge else null
+        this.on_change_userdata = changeRef?.asCPointer()
+        this.on_enter = if (enterRef != null) callbackBridge else null
+        this.on_enter_userdata = enterRef?.asCPointer()
+    }
+    Component(ftxui_component_input_with_options(opts)!!).also { c ->
+        changeRef?.let { c.cleanups.add { it.dispose() } }
+        enterRef?.let { c.cleanups.add { it.dispose() } }
+    }
+}
+
 fun checkbox(label: String, checked: BoolState): Component =
     Component(ftxui_component_checkbox(label, checked.ptr)!!)
+
+fun checkbox(label: String, checked: BoolState, onChange: () -> Unit): Component {
+    val ref = StableRef.create(onChange)
+    return Component(ftxui_component_checkbox_with_change(label, checked.ptr, callbackBridge, ref.asCPointer())!!).also {
+        it.cleanups.add { ref.dispose() }
+    }
+}
 
 fun toggle(entries: List<String>, selected: IntState): Component = memScoped {
     val ptrs = allocArray<CPointerVar<ByteVar>>(entries.size)
@@ -790,8 +982,22 @@ fun slider(label: String, value: IntState, min: Int, max: Int, increment: Int = 
 fun slider(value: IntState, min: Int, max: Int, increment: Int = 1, direction: Direction): Component =
     Component(ftxui_component_slider_int_direction(value.ptr, min, max, increment, direction.value)!!)
 
+fun slider(value: IntState, min: Int, max: Int, increment: Int = 1, onChange: () -> Unit): Component {
+    val ref = StableRef.create(onChange)
+    return Component(ftxui_component_slider_int_with_change(value.ptr, min, max, increment, callbackBridge, ref.asCPointer())!!).also {
+        it.cleanups.add { ref.dispose() }
+    }
+}
+
 fun slider(label: String, value: FloatState, min: Float, max: Float, increment: Float): Component =
     Component(ftxui_component_slider_float(label, value.ptr, min, max, increment)!!)
+
+fun slider(value: FloatState, min: Float, max: Float, increment: Float, onChange: () -> Unit): Component {
+    val ref = StableRef.create(onChange)
+    return Component(ftxui_component_slider_float_with_change(value.ptr, min, max, increment, callbackBridge, ref.asCPointer())!!).also {
+        it.cleanups.add { ref.dispose() }
+    }
+}
 
 fun slider(value: FloatState, min: Float, max: Float, increment: Float, direction: Direction,
            colorActive: Color? = null, colorInactive: Color? = null): Component =
@@ -803,10 +1009,43 @@ fun radiobox(entries: List<String>, selected: IntState): Component = memScoped {
     Component(ftxui_component_radiobox(ptrs, entries.size, selected.ptr)!!)
 }
 
+fun radiobox(entries: List<String>, selected: IntState, onChange: () -> Unit): Component {
+    val ref = StableRef.create(onChange)
+    return memScoped {
+        val ptrs = allocArray<CPointerVar<ByteVar>>(entries.size)
+        entries.forEachIndexed { i, s -> ptrs[i] = s.cstr.getPointer(this) }
+        Component(ftxui_component_radiobox_with_change(ptrs, entries.size, selected.ptr, callbackBridge, ref.asCPointer())!!).also {
+            it.cleanups.add { ref.dispose() }
+        }
+    }
+}
+
 fun menu(entries: List<String>, selected: IntState): Component = memScoped {
     val ptrs = allocArray<CPointerVar<ByteVar>>(entries.size)
     entries.forEachIndexed { i, s -> ptrs[i] = s.cstr.getPointer(this) }
     Component(ftxui_component_menu(ptrs, entries.size, selected.ptr)!!)
+}
+
+fun menu(
+    entries: List<String>,
+    selected: IntState,
+    onChange: (() -> Unit)? = null,
+    onEnter: (() -> Unit)? = null,
+): Component {
+    val changeRef = onChange?.let { StableRef.create(it) }
+    val enterRef = onEnter?.let { StableRef.create(it) }
+    return memScoped {
+        val ptrs = allocArray<CPointerVar<ByteVar>>(entries.size)
+        entries.forEachIndexed { i, s -> ptrs[i] = s.cstr.getPointer(this) }
+        Component(ftxui_component_menu_with_callbacks(
+            ptrs, entries.size, selected.ptr,
+            if (changeRef != null) callbackBridge else null, changeRef?.asCPointer(),
+            if (enterRef != null) callbackBridge else null, enterRef?.asCPointer(),
+        )!!).also { c ->
+            changeRef?.let { c.cleanups.add { it.dispose() } }
+            enterRef?.let { c.cleanups.add { it.dispose() } }
+        }
+    }
 }
 
 fun menuEntry(label: String): Component =
@@ -839,6 +1078,21 @@ fun menuHorizontal(entries: List<String>, selected: IntState): Component = memSc
 
 private val separatorFuncBridge = staticCFunction<COpaquePointer?, ftxui_element_handle_t?> { userdata ->
     userdata!!.asStableRef<() -> Element>().get()().handle
+}
+
+// Shared bridge for ftxui_callback_t: userdata is a StableRef<() -> Unit>.
+private val callbackBridge = staticCFunction<COpaquePointer?, Unit> { refPtr ->
+    refPtr?.asStableRef<() -> Unit>()?.get()?.invoke()
+}
+
+// Shared bridge for hoverable_change: (bool, void*) callback.
+private val hoverChangeBridge = staticCFunction<Boolean, COpaquePointer?, Unit> { hovered, refPtr ->
+    refPtr?.asStableRef<(Boolean) -> Unit>()?.get()?.invoke(hovered)
+}
+
+// Shared bridge for maybe_fn predicate: (void*) -> bool callback.
+private val predicateBridge = staticCFunction<COpaquePointer?, Boolean> { refPtr ->
+    refPtr?.asStableRef<() -> Boolean>()?.get()?.invoke() ?: false
 }
 
 fun resizableSplit(
@@ -952,6 +1206,19 @@ fun collapsible(label: String, child: Component, show: BoolState): Component =
 fun maybe(child: Component, show: BoolState): Component =
     child.wrapOwning(ftxui_component_maybe(child.handle, show.ptr)!!)
 
+fun maybe(child: Component, predicate: () -> Boolean): Component {
+    val ref = StableRef.create(predicate)
+    return child.wrapOwning(ftxui_component_maybe_fn(child.handle, predicateBridge, ref.asCPointer())!!).also {
+        it.cleanups.add { ref.dispose() }
+    }
+}
+
+fun hoverable(component: Component, onEnter: () -> Unit, onLeave: () -> Unit): Component =
+    component.hoverable(onEnter, onLeave)
+
+fun hoverable(component: Component, onChange: (Boolean) -> Unit): Component =
+    component.hoverable(onChange)
+
 fun modal(main: Component, modal: Component, showModal: BoolState): Component =
     wrapOwning(main, modal, ftxui_component_modal(main.handle, modal.handle, showModal.ptr)!!)
 
@@ -1023,6 +1290,7 @@ fun modal(main: Component, modal: Component, showModal: KMutableProperty0<Boolea
 
 fun Component.maybe(show: BoolState) = maybe(this, show)
 fun Component.maybe(show: KMutableProperty0<Boolean>) = maybe(this, show)
+fun Component.maybe(predicate: () -> Boolean) = maybe(this, predicate)
 fun Component.modal(modal: Component, showModal: BoolState) = modal(this, modal, showModal)
 fun Component.modal(modal: Component, showModal: KMutableProperty0<Boolean>) = modal(this, modal, showModal)
 
@@ -1096,24 +1364,67 @@ fun menuToggle(entries: List<String>, selected: KMutableProperty0<Int>): Compone
 class Canvas internal constructor(private val handle: ftxui_canvas_handle_t) {
     fun destroy() = ftxui_canvas_destroy(handle)
 
+    fun width(): Int = ftxui_canvas_width(handle)
+    fun height(): Int = ftxui_canvas_height(handle)
+
+    // -- Text
     fun drawText(x: Int, y: Int, text: String) = ftxui_canvas_draw_text(handle, x, y, text)
     fun drawText(x: Int, y: Int, text: String, color: Color) =
         ftxui_canvas_draw_text_color(handle, x, y, text, color.handle)
 
+    // -- Braille point drawing
+    fun drawPointOn(x: Int, y: Int) = ftxui_canvas_draw_point_on(handle, x, y)
+    fun drawPointOff(x: Int, y: Int) = ftxui_canvas_draw_point_off(handle, x, y)
+    fun drawPointToggle(x: Int, y: Int) = ftxui_canvas_draw_point_toggle(handle, x, y)
+    fun drawPoint(x: Int, y: Int, value: Boolean) = ftxui_canvas_draw_point(handle, x, y, value)
+    fun drawPoint(x: Int, y: Int, value: Boolean, color: Color) =
+        ftxui_canvas_draw_point_color(handle, x, y, value, color.handle)
+
     fun drawPointLine(x1: Int, y1: Int, x2: Int, y2: Int, color: Color? = null) =
         ftxui_canvas_draw_point_line(handle, x1, y1, x2, y2, color?.handle)
+
+    fun drawPointCircle(x: Int, y: Int, radius: Int) = ftxui_canvas_draw_point_circle(handle, x, y, radius)
+    fun drawPointCircle(x: Int, y: Int, radius: Int, color: Color) =
+        ftxui_canvas_draw_point_circle_color(handle, x, y, radius, color.handle)
+    fun drawPointCircleFilled(x: Int, y: Int, radius: Int) = ftxui_canvas_draw_point_circle_filled(handle, x, y, radius)
+    fun drawPointCircleFilled(x: Int, y: Int, radius: Int, color: Color) =
+        ftxui_canvas_draw_point_circle_filled_color(handle, x, y, radius, color.handle)
+
+    fun drawPointEllipse(x: Int, y: Int, rx: Int, ry: Int) = ftxui_canvas_draw_point_ellipse(handle, x, y, rx, ry)
+    fun drawPointEllipse(x: Int, y: Int, rx: Int, ry: Int, color: Color) =
+        ftxui_canvas_draw_point_ellipse_color(handle, x, y, rx, ry, color.handle)
+    fun drawPointEllipseFilled(x: Int, y: Int, rx: Int, ry: Int) = ftxui_canvas_draw_point_ellipse_filled(handle, x, y, rx, ry)
+    fun drawPointEllipseFilled(x: Int, y: Int, rx: Int, ry: Int, color: Color) =
+        ftxui_canvas_draw_point_ellipse_filled_color(handle, x, y, rx, ry, color.handle)
+
+    // -- Block pixel drawing
+    fun drawBlockOn(x: Int, y: Int) = ftxui_canvas_draw_block_on(handle, x, y)
+    fun drawBlockOff(x: Int, y: Int) = ftxui_canvas_draw_block_off(handle, x, y)
+    fun drawBlockToggle(x: Int, y: Int) = ftxui_canvas_draw_block_toggle(handle, x, y)
+    fun drawBlock(x: Int, y: Int, value: Boolean) = ftxui_canvas_draw_block(handle, x, y, value)
+    fun drawBlock(x: Int, y: Int, value: Boolean, color: Color) =
+        ftxui_canvas_draw_block_color(handle, x, y, value, color.handle)
+
     fun drawBlockLine(x1: Int, y1: Int, x2: Int, y2: Int, color: Color? = null) =
         ftxui_canvas_draw_block_line(handle, x1, y1, x2, y2, color?.handle)
 
-    fun drawPointCircle(x: Int, y: Int, radius: Int) = ftxui_canvas_draw_point_circle(handle, x, y, radius)
-    fun drawPointCircleFilled(x: Int, y: Int, radius: Int) = ftxui_canvas_draw_point_circle_filled(handle, x, y, radius)
     fun drawBlockCircle(x: Int, y: Int, radius: Int) = ftxui_canvas_draw_block_circle(handle, x, y, radius)
+    fun drawBlockCircle(x: Int, y: Int, radius: Int, color: Color) =
+        ftxui_canvas_draw_block_circle_color(handle, x, y, radius, color.handle)
     fun drawBlockCircleFilled(x: Int, y: Int, radius: Int) = ftxui_canvas_draw_block_circle_filled(handle, x, y, radius)
+    fun drawBlockCircleFilled(x: Int, y: Int, radius: Int, color: Color) =
+        ftxui_canvas_draw_block_circle_filled_color(handle, x, y, radius, color.handle)
 
-    fun drawPointEllipse(x: Int, y: Int, rx: Int, ry: Int) = ftxui_canvas_draw_point_ellipse(handle, x, y, rx, ry)
-    fun drawPointEllipseFilled(x: Int, y: Int, rx: Int, ry: Int) = ftxui_canvas_draw_point_ellipse_filled(handle, x, y, rx, ry)
     fun drawBlockEllipse(x: Int, y: Int, rx: Int, ry: Int) = ftxui_canvas_draw_block_ellipse(handle, x, y, rx, ry)
+    fun drawBlockEllipse(x: Int, y: Int, rx: Int, ry: Int, color: Color) =
+        ftxui_canvas_draw_block_ellipse_color(handle, x, y, rx, ry, color.handle)
     fun drawBlockEllipseFilled(x: Int, y: Int, rx: Int, ry: Int) = ftxui_canvas_draw_block_ellipse_filled(handle, x, y, rx, ry)
+    fun drawBlockEllipseFilled(x: Int, y: Int, rx: Int, ry: Int, color: Color) =
+        ftxui_canvas_draw_block_ellipse_filled_color(handle, x, y, rx, ry, color.handle)
+
+    // -- Cell styling
+    fun style(x: Int, y: Int, callback: ftxui_cell_style_callback_t, userdata: COpaquePointer? = null) =
+        ftxui_canvas_style(handle, x, y, callback, userdata)
 
     fun toElement(): Element = Element(ftxui_element_canvas_ref(handle)!!)
 
@@ -1150,6 +1461,10 @@ class LinearGradient internal constructor(internal val handle: ftxui_linear_grad
 
     companion object {
         operator fun invoke() = LinearGradient(ftxui_linear_gradient_create()!!)
+        operator fun invoke(begin: Color, end: Color) =
+            LinearGradient(ftxui_linear_gradient_create()!!).stop(begin).stop(end)
+        operator fun invoke(angle: Float, begin: Color, end: Color) =
+            LinearGradient(ftxui_linear_gradient_create()!!).angle(angle).stop(begin).stop(end)
     }
 }
 
@@ -1228,6 +1543,10 @@ fun flexbox(vararg elements: Element, config: FlexboxConfig = FlexboxConfig()): 
 
 // -- Table
 
+private val decoratorBridge = staticCFunction<ftxui_element_handle_t?, COpaquePointer?, ftxui_element_handle_t?> { elementHandle, refPtr ->
+    refPtr!!.asStableRef<(Element) -> Element>().get()(Element(elementHandle!!)).handle
+}
+
 class Table internal constructor(private val handle: ftxui_table_handle_t) {
     fun destroy() = ftxui_table_destroy(handle)
     fun render(): Element = Element(ftxui_table_render(handle)!!)
@@ -1236,7 +1555,10 @@ class Table internal constructor(private val handle: ftxui_table_handle_t) {
     fun selectRow(row: Int) = TableSelection(ftxui_table_select_row(handle, row)!!)
     fun selectRows(from: Int, to: Int) = TableSelection(ftxui_table_select_rows(handle, from, to)!!)
     fun selectColumn(col: Int) = TableSelection(ftxui_table_select_column(handle, col)!!)
+    fun selectColumns(from: Int, to: Int) = TableSelection(ftxui_table_select_columns(handle, from, to)!!)
     fun selectCell(col: Int, row: Int) = TableSelection(ftxui_table_select_cell(handle, col, row)!!)
+    fun selectRectangle(colMin: Int, colMax: Int, rowMin: Int, rowMax: Int) =
+        TableSelection(ftxui_table_select_rectangle(handle, colMin, colMax, rowMin, rowMax)!!)
 
     companion object {
         operator fun invoke(rows: List<List<String>>): Table = memScoped {
@@ -1253,11 +1575,75 @@ class Table internal constructor(private val handle: ftxui_table_handle_t) {
 }
 
 class TableSelection internal constructor(private val handle: ftxui_table_selection_handle_t) {
-    fun destroy() = ftxui_table_selection_destroy(handle)
+    private val refs = mutableListOf<StableRef<*>>()
 
+    fun destroy() {
+        refs.forEach { it.dispose() }
+        refs.clear()
+        ftxui_table_selection_destroy(handle)
+    }
+
+    private fun track(transform: (Element) -> Element): COpaquePointer =
+        StableRef.create(transform).also { refs.add(it) }.asCPointer()
+
+    // -- Border
     fun border(style: BorderStyle = BorderStyle.Light) = apply { ftxui_table_selection_border(handle, style.value) }
     fun borderColor(style: BorderStyle, color: Color) = apply { ftxui_table_selection_border_color(handle, style.value, color.handle) }
+    fun borderLeft(style: BorderStyle = BorderStyle.Light) = apply { ftxui_table_selection_border_left(handle, style.value) }
+    fun borderRight(style: BorderStyle = BorderStyle.Light) = apply { ftxui_table_selection_border_right(handle, style.value) }
+    fun borderTop(style: BorderStyle = BorderStyle.Light) = apply { ftxui_table_selection_border_top(handle, style.value) }
+    fun borderBottom(style: BorderStyle = BorderStyle.Light) = apply { ftxui_table_selection_border_bottom(handle, style.value) }
+
+    // -- Separator
+    fun separator(style: BorderStyle = BorderStyle.Light) = apply { ftxui_table_selection_separator(handle, style.value) }
     fun separatorVertical(style: BorderStyle = BorderStyle.Light) = apply { ftxui_table_selection_separator_vertical(handle, style.value) }
+    fun separatorHorizontal(style: BorderStyle = BorderStyle.Light) = apply { ftxui_table_selection_separator_horizontal(handle, style.value) }
+
+    // -- Generic decorator callbacks
+    fun decorate(transform: (Element) -> Element) = apply {
+        ftxui_table_selection_decorate(handle, decoratorBridge, track(transform))
+    }
+    fun decorateAlternateRow(transform: (Element) -> Element, modulo: Int = 2, shift: Int = 0) = apply {
+        ftxui_table_selection_decorate_alternate_row(handle, decoratorBridge, track(transform), modulo, shift)
+    }
+    fun decorateAlternateColumn(transform: (Element) -> Element, modulo: Int = 2, shift: Int = 0) = apply {
+        ftxui_table_selection_decorate_alternate_column(handle, decoratorBridge, track(transform), modulo, shift)
+    }
+    fun decorateBorder(transform: (Element) -> Element) = apply {
+        ftxui_table_selection_decorate_border(handle, decoratorBridge, track(transform))
+    }
+    fun decorateBorderLeft(transform: (Element) -> Element) = apply {
+        ftxui_table_selection_decorate_border_left(handle, decoratorBridge, track(transform))
+    }
+    fun decorateBorderRight(transform: (Element) -> Element) = apply {
+        ftxui_table_selection_decorate_border_right(handle, decoratorBridge, track(transform))
+    }
+    fun decorateBorderTop(transform: (Element) -> Element) = apply {
+        ftxui_table_selection_decorate_border_top(handle, decoratorBridge, track(transform))
+    }
+    fun decorateBorderBottom(transform: (Element) -> Element) = apply {
+        ftxui_table_selection_decorate_border_bottom(handle, decoratorBridge, track(transform))
+    }
+    fun decorateSeparator(transform: (Element) -> Element) = apply {
+        ftxui_table_selection_decorate_separator(handle, decoratorBridge, track(transform))
+    }
+    fun decorateSeparatorVertical(transform: (Element) -> Element) = apply {
+        ftxui_table_selection_decorate_separator_vertical(handle, decoratorBridge, track(transform))
+    }
+    fun decorateSeparatorHorizontal(transform: (Element) -> Element) = apply {
+        ftxui_table_selection_decorate_separator_horizontal(handle, decoratorBridge, track(transform))
+    }
+    fun decorateCells(transform: (Element) -> Element) = apply {
+        ftxui_table_selection_decorate_cells(handle, decoratorBridge, track(transform))
+    }
+    fun decorateCellsAlternateRow(transform: (Element) -> Element, modulo: Int = 2, shift: Int = 0) = apply {
+        ftxui_table_selection_decorate_cells_alternate_row(handle, decoratorBridge, track(transform), modulo, shift)
+    }
+    fun decorateCellsAlternateColumn(transform: (Element) -> Element, modulo: Int = 2, shift: Int = 0) = apply {
+        ftxui_table_selection_decorate_cells_alternate_column(handle, decoratorBridge, track(transform), modulo, shift)
+    }
+
+    // -- Convenience helpers (matching pre-existing pattern)
     fun decorateBold() = apply { ftxui_table_selection_decorate_bold(handle) }
     fun decorateCellsAlignRight() = apply { ftxui_table_selection_decorate_cells_align_right(handle) }
     fun decorateCellsColor(color: Color) = apply { ftxui_table_selection_decorate_cells_color(handle, color.handle) }
@@ -1304,6 +1690,8 @@ class FtxUILoop internal constructor(
 ) {
     fun hasQuitted(): Boolean = ftxui_loop_has_quitted(loopHandle)
     fun runOnce() = ftxui_loop_run_once(loopHandle)
+    fun runOnceBlocking() = ftxui_loop_run_once_blocking(loopHandle)
+    fun run() { while (!hasQuitted()) runOnceBlocking() }
     fun destroy() = ftxui_loop_destroy(loopHandle)
 
     companion object {
@@ -1314,7 +1702,29 @@ class FtxUILoop internal constructor(
 
 // -- ColorInfo
 
-data class ColorInfo(val index256: Int, val name: String)
+data class ColorInfo(
+    val index256: Int,
+    val index16: Int,
+    val name: String,
+    val red: Int,
+    val green: Int,
+    val blue: Int,
+    val hue: Int,
+    val saturation: Int,
+    val value: Int,
+)
+
+private fun ftxui_color_info_t.toKotlin() = ColorInfo(
+    index256 = index_256,
+    index16 = index_16.toInt(),
+    name = name?.toKString() ?: "",
+    red = red.toInt(),
+    green = green.toInt(),
+    blue = blue.toInt(),
+    hue = hue.toInt(),
+    saturation = saturation.toInt(),
+    value = value.toInt(),
+)
 
 fun colorInfoSorted2D(): List<List<ColorInfo>> = memScoped {
     val rows = alloc<IntVar>()
@@ -1325,10 +1735,55 @@ fun colorInfoSorted2D(): List<List<ColorInfo>> = memScoped {
     val result = (0 until numRows).map { r ->
         (0 until numCols).mapNotNull { c ->
             val entry = data[r * numCols + c]
-            if (entry.index_256 == -1) null
-            else ColorInfo(entry.index_256, entry.name?.toKString() ?: "")
+            if (entry.index_256 == -1) null else entry.toKotlin()
         }
     }
     ftxui_color_info_free(data)
     result
+}
+
+fun getColorInfo256(index: ftxui_palette256_t): ColorInfo = ftxui_color_info_get_256(index).useContents { toKotlin() }
+fun getColorInfo16(index: ftxui_palette16_t): ColorInfo = ftxui_color_info_get_16(index).useContents { toKotlin() }
+
+// -- Easing functions
+
+typealias EasingFunction = (Float) -> Float
+
+enum class EasingType(internal val cValue: ftxui_easing_function_type_t) {
+    Linear(ftxui_easing_function_type_t.FTXUI_EASING_LINEAR),
+    QuadraticIn(ftxui_easing_function_type_t.FTXUI_EASING_QUADRATIC_IN),
+    QuadraticOut(ftxui_easing_function_type_t.FTXUI_EASING_QUADRATIC_OUT),
+    QuadraticInOut(ftxui_easing_function_type_t.FTXUI_EASING_QUADRATIC_IN_OUT),
+    CubicIn(ftxui_easing_function_type_t.FTXUI_EASING_CUBIC_IN),
+    CubicOut(ftxui_easing_function_type_t.FTXUI_EASING_CUBIC_OUT),
+    CubicInOut(ftxui_easing_function_type_t.FTXUI_EASING_CUBIC_IN_OUT),
+    QuarticIn(ftxui_easing_function_type_t.FTXUI_EASING_QUARTIC_IN),
+    QuarticOut(ftxui_easing_function_type_t.FTXUI_EASING_QUARTIC_OUT),
+    QuarticInOut(ftxui_easing_function_type_t.FTXUI_EASING_QUARTIC_IN_OUT),
+    QuinticIn(ftxui_easing_function_type_t.FTXUI_EASING_QUINTIC_IN),
+    QuinticOut(ftxui_easing_function_type_t.FTXUI_EASING_QUINTIC_OUT),
+    QuinticInOut(ftxui_easing_function_type_t.FTXUI_EASING_QUINTIC_IN_OUT),
+    SineIn(ftxui_easing_function_type_t.FTXUI_EASING_SINE_IN),
+    SineOut(ftxui_easing_function_type_t.FTXUI_EASING_SINE_OUT),
+    SineInOut(ftxui_easing_function_type_t.FTXUI_EASING_SINE_IN_OUT),
+    CircularIn(ftxui_easing_function_type_t.FTXUI_EASING_CIRCULAR_IN),
+    CircularOut(ftxui_easing_function_type_t.FTXUI_EASING_CIRCULAR_OUT),
+    CircularInOut(ftxui_easing_function_type_t.FTXUI_EASING_CIRCULAR_IN_OUT),
+    ExponentialIn(ftxui_easing_function_type_t.FTXUI_EASING_EXPONENTIAL_IN),
+    ExponentialOut(ftxui_easing_function_type_t.FTXUI_EASING_EXPONENTIAL_OUT),
+    ExponentialInOut(ftxui_easing_function_type_t.FTXUI_EASING_EXPONENTIAL_IN_OUT),
+    ElasticIn(ftxui_easing_function_type_t.FTXUI_EASING_ELASTIC_IN),
+    ElasticOut(ftxui_easing_function_type_t.FTXUI_EASING_ELASTIC_OUT),
+    ElasticInOut(ftxui_easing_function_type_t.FTXUI_EASING_ELASTIC_IN_OUT),
+    BackIn(ftxui_easing_function_type_t.FTXUI_EASING_BACK_IN),
+    BackOut(ftxui_easing_function_type_t.FTXUI_EASING_BACK_OUT),
+    BackInOut(ftxui_easing_function_type_t.FTXUI_EASING_BACK_IN_OUT),
+    BounceIn(ftxui_easing_function_type_t.FTXUI_EASING_BOUNCE_IN),
+    BounceOut(ftxui_easing_function_type_t.FTXUI_EASING_BOUNCE_OUT),
+    BounceInOut(ftxui_easing_function_type_t.FTXUI_EASING_BOUNCE_IN_OUT),
+}
+
+fun easing(type: EasingType): EasingFunction {
+    val fn = ftxui_easing_function_get(type.cValue)!!
+    return { progress -> fn(progress) }
 }
