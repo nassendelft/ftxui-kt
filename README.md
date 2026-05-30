@@ -15,16 +15,18 @@ Kotlin/Native bindings for [ftxui](https://github.com/ArthurSonzogni/FTXUI), a C
 import nl.ncaj.*
 import nl.ncaj.dsl.*
 
-fun main() = fullscreenApp {
-    var checked = false
-    var selected = 0
-    var inputText = ""
+// State vars must be class or top-level properties, not local variables.
+// See "State" section below for details.
+var checked = false
+var selected = 0
+var inputText = ""
 
+fun main() = fullscreenApp {
     val menu = vertical {
         +checkbox("Enable feature", ::checked)
         +input(::inputText, "type here…")
         +menu(listOf("Option A", "Option B", "Option C"), ::selected)
-        +button("Quit") { exit() }
+        +button("Quit", onClick = { exit() })
     }
 
     renderer(child = menu) {
@@ -93,21 +95,44 @@ The block's last expression is the root component. The `AppScope` receiver provi
 
 ### State
 
-Use plain Kotlin `var` declarations. Pass them to components via property references:
+Components that hold mutable state (inputs, checkboxes, menus, sliders, etc.) take a
+`KMutableProperty0<T>` via `::` syntax so the DSL can read and write your variable directly.
 
 ```kotlin
-fullscreenApp {
-    var count = 0
-    var label = ""
-    var enabled = false
+// Top-level or class member properties
+var count = 0
+var label = ""
+var enabled = false
 
+fun main() = fullscreenApp {
     vertical {
         +slider("Count", ::count, 0, 100)
         +input(::label, "enter label…")
         +checkbox("Enabled", ::enabled)
-        +button("Reset") { count = 0; label = "" }
+        +button("Reset", onClick = { count = 0; label = "" })
     }
 }
+```
+
+> **Kotlin/Native limitation:** `::` references to *local variables* (variables declared inside
+> a function or lambda body) are [not yet supported](https://youtrack.jetbrains.com/issue/KT-15360)
+> in Kotlin/Native. State variables must be **top-level** or **class member** properties.
+> This is a Kotlin/Native compiler restriction, not specific to this library.
+
+### Button trailing lambda
+
+Because `button` has a third `options` parameter after `onClick`, Kotlin's trailing lambda
+syntax does not apply when the call is prefixed with `+`. Use a named argument instead:
+
+```kotlin
+// Correct
++button("Click me", onClick = { doSomething() })
+
+// Also correct (explicit parentheses)
++(button("Click me") { doSomething() })
+
+// Wrong — the lambda is parsed as a separate expression, not as onClick
++button("Click me") { doSomething() }
 ```
 
 ### Container builders
@@ -136,10 +161,10 @@ val el = canvas(80, 24) {
     drawPointCircle(40, 12, 8, Color.Red)
 }
 
-// Tables
+// Tables — selections use a lambda block
 val el = table(listOf(listOf("Name", "Age"), listOf("Alice", "30"))) {
-    selectAll().border()
-    selectRow(0).decorateBold().decorateCellsColor(Color.Blue)
+    selectAll { border() }
+    selectRow(0) { decorateBold().decorateCellsColor(Color.Blue) }
 }
 
 // Graph
