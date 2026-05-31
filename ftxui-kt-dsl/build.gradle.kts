@@ -1,5 +1,14 @@
 plugins {
     kotlin("multiplatform")
+    id("publishing-conventions")
+}
+
+publishing {
+    publications.withType<MavenPublication>().all {
+        pom {
+            description.set("FTXUI Kotlin/Native bindings with custom DSL")
+        }
+    }
 }
 
 val hostOs = System.getProperty("os.name")

@@ -2,6 +2,15 @@ import java.net.URI
 
 plugins {
     kotlin("multiplatform")
+    id("publishing-conventions")
+}
+
+publishing {
+    publications.withType<MavenPublication>().all {
+        pom {
+            description.set("FTXUI Kotlin/Native bindings")
+        }
+    }
 }
 
 val hostOs = System.getProperty("os.name")
