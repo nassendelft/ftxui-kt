@@ -34,7 +34,7 @@ kotlin {
         compilations.getByName("main") {
             defaultSourceSet {
                 dependencies {
-                    implementation(project(":ftxui-kt"))
+                    implementation("nl.ncaj.ftxui:ftxui-kt:${property("ftxuiKtVersion")}")
                 }
             }
         }
