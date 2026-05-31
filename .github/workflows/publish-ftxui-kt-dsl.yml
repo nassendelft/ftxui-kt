@@ -14,11 +14,9 @@ jobs:
           - os: ubuntu-latest
             platform_task: publishLinuxX64PublicationToSonatype
             publish_metadata: true
-            ftxui_kt_artifact: ftxui-kt-linuxx64
           - os: macos-latest
             platform_task: publishMacosArm64PublicationToSonatype
             publish_metadata: false
-            ftxui_kt_artifact: ftxui-kt-macosarm64
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -34,23 +32,6 @@ jobs:
       - name: Extract version from tag
         id: version
         run: echo "version=${GITHUB_REF_NAME#ftxui-kt-dsl/v}" >> $GITHUB_OUTPUT
-
-      - name: Wait for ftxui-kt on Maven Central
-        run: |
-          KT_VERSION=$(grep ftxuiKtVersion gradle.properties | cut -d= -f2)
-          ARTIFACT="${{ matrix.ftxui_kt_artifact }}"
-          URL="https://repo.maven.apache.org/maven2/nl/ncaj/ftxui/${ARTIFACT}/${KT_VERSION}/${ARTIFACT}-${KT_VERSION}.pom"
-          echo "Polling for ${ARTIFACT}:${KT_VERSION} at ${URL}"
-          for i in $(seq 1 30); do
-            if curl -sf "$URL" > /dev/null; then
-              echo "${ARTIFACT}:${KT_VERSION} is available"
-              exit 0
-            fi
-            echo "Attempt ${i}/30: not available yet, waiting 60s..."
-            sleep 60
-          done
-          echo "Timed out waiting for ${ARTIFACT}:${KT_VERSION} on Maven Central"
-          exit 1
 
       - name: Publish platform artifact
         run: ./gradlew :ftxui-kt-dsl:${{ matrix.platform_task }} -PpublishVersion=${{ steps.version.outputs.version }}
