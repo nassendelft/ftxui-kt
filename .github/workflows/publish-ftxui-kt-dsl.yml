@@ -10,7 +10,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, ubuntu-24.04-arm]
+        include:
+          - os: ubuntu-latest
+            platform_task: publishLinuxX64PublicationToSonatype
+            publish_metadata: true
+          - os: macos-latest
+            platform_task: publishMacosArm64PublicationToSonatype
+            publish_metadata: false
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -27,8 +33,16 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF_NAME#ftxui-kt-dsl/v}" >> $GITHUB_OUTPUT
 
-      - name: Publish to Sonatype Central
-        run: ./gradlew :ftxui-kt-dsl:publishAllPublicationsToSonatype -PpublishVersion=${{ steps.version.outputs.version }}
+      - name: Publish platform artifact
+        run: ./gradlew :ftxui-kt-dsl:${{ matrix.platform_task }} -PpublishVersion=${{ steps.version.outputs.version }}
+        env:
+          SONATYPE_AUTH_TOKEN: ${{ secrets.SONATYPE_AUTH_TOKEN }}
+          PGP_KEY: ${{ secrets.PGP_KEY }}
+          PGP_PASSWORD: ${{ secrets.PGP_PASSWORD }}
+
+      - name: Publish multiplatform metadata
+        if: matrix.publish_metadata
+        run: ./gradlew :ftxui-kt-dsl:publishKotlinMultiplatformPublicationToSonatype -PpublishVersion=${{ steps.version.outputs.version }}
         env:
           SONATYPE_AUTH_TOKEN: ${{ secrets.SONATYPE_AUTH_TOKEN }}
           PGP_KEY: ${{ secrets.PGP_KEY }}
