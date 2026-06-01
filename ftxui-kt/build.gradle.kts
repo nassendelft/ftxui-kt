@@ -19,7 +19,6 @@ val hostArch = System.getProperty("os.arch")
 val nativeTargetName = (findProperty("native.target") as String?)
     ?: when {
         hostOs.startsWith("Mac") && hostArch == "aarch64" -> "macosArm64"
-        hostOs.startsWith("Linux") && hostArch == "aarch64" -> "linuxArm64"
         hostOs.startsWith("Linux") -> "linuxX64"
         else -> error("Unsupported host OS: $hostOs ($hostArch)")
     }
@@ -27,7 +26,6 @@ val nativeTargetName = (findProperty("native.target") as String?)
 val ftxuiCVersion = "v1.0.0"
 
 val ftxuiCPlatform = when {
-    hostOs.startsWith("Linux") && hostArch == "aarch64" -> "linux-arm64"
     hostOs.startsWith("Linux") -> "linux-x86_64"
     hostOs.startsWith("Mac") -> "macos-arm64"
     else -> error("Unsupported platform: $hostOs ($hostArch)")
@@ -56,10 +54,12 @@ val extractFtxuiC = tasks.register<Exec>("extractFtxuiC") {
 }
 
 kotlin {
+    val macosTarget = macosArm64()
+    val linuxTarget = linuxX64()
+
     val nativeTarget = when (nativeTargetName) {
-        "macosArm64" -> macosArm64()
-        "linuxArm64" -> linuxArm64()
-        "linuxX64" -> linuxX64()
+        "macosArm64" -> macosTarget
+        "linuxX64" -> linuxTarget
         else -> error("Unsupported target: $nativeTargetName")
     }
 
