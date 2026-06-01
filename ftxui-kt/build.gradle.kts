@@ -57,6 +57,15 @@ kotlin {
     val macosTarget = macosArm64()
     val linuxTarget = linuxX64()
 
+    // Move sources out of nativeMain into target-specific sets so that
+    // compileNativeMainKotlinMetadata has nothing to compile and doesn't
+    // require cinterop klibs from non-host targets.
+    sourceSets {
+        val nativeMain by getting { kotlin.setSrcDirs(emptyList<Any>()) }
+        val macosArm64Main by getting { kotlin.srcDir("src/nativeMain/kotlin") }
+        val linuxX64Main by getting { kotlin.srcDir("src/nativeMain/kotlin") }
+    }
+
     val nativeTarget = when (nativeTargetName) {
         "macosArm64" -> macosTarget
         "linuxX64" -> linuxTarget
