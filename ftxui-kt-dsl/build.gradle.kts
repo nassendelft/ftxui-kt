@@ -25,17 +25,6 @@ kotlin {
     val macosTarget = macosArm64()
     val linuxTarget = linuxX64()
 
-    // Same approach as ftxui-kt: keep nativeMain empty so metadata compilation
-    // doesn't need cinterop klibs from non-host targets.
-    sourceSets {
-        val nativeMain by getting { kotlin.setSrcDirs(emptyList<Any>()) }
-        val nativeTest by getting { kotlin.setSrcDirs(emptyList<Any>()) }
-        val macosArm64Main by getting { kotlin.srcDir("src/nativeMain/kotlin") }
-        val linuxX64Main by getting { kotlin.srcDir("src/nativeMain/kotlin") }
-        val macosArm64Test by getting { kotlin.srcDir("src/nativeTest/kotlin") }
-        val linuxX64Test by getting { kotlin.srcDir("src/nativeTest/kotlin") }
-    }
-
     val nativeTarget = when (nativeTargetName) {
         "macosArm64" -> macosTarget
         "linuxX64" -> linuxTarget
@@ -58,4 +47,15 @@ kotlin {
             }
         }
     }
+}
+
+// Same lazy source-set approach as ftxui-kt.
+kotlin.sourceSets.matching { it.name in setOf("nativeMain", "nativeTest") }.configureEach {
+    kotlin.setSrcDirs(emptyList<Any>())
+}
+kotlin.sourceSets.matching { it.name in setOf("macosArm64Main", "linuxX64Main") }.configureEach {
+    kotlin.srcDir("src/nativeMain/kotlin")
+}
+kotlin.sourceSets.matching { it.name in setOf("macosArm64Test", "linuxX64Test") }.configureEach {
+    kotlin.srcDir("src/nativeTest/kotlin")
 }
