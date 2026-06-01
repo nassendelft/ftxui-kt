@@ -63,28 +63,19 @@ kotlin {
         else -> error("Unsupported target: $nativeTargetName")
     }
 
-    nativeTarget.apply {
-        compilations.getByName("main") {
+    // Apply the cinterop to both targets so the commonizer can produce a nativeMain klib.
+    // The non-host target uses the host's downloaded headers and .a files — the FTXUI C API is
+    // identical on all platforms, and the non-host binary is never linked on this machine.
+    listOf(macosTarget, linuxTarget).forEach { target ->
+        target.compilations.getByName("main") {
             val ftxui_c by cinterops.creating {
                 includeDirs(nativeDir.map { it.dir("include").asFile })
-                extraOpts(
-                    "-libraryPath", nativeDir.map { it.dir("lib").asFile.absolutePath }.get()
-                )
+                extraOpts("-libraryPath", nativeDir.map { it.dir("lib").asFile.absolutePath }.get())
             }
         }
     }
 }
 
-// nativeMain is created lazily by KGP when multiple native targets are declared.
-// Clear its srcDirs and re-add them to the target-specific sets so that
-// compileNativeMainKotlinMetadata has nothing to compile and doesn't require
-// cinterop klibs from non-host targets.
-kotlin.sourceSets.matching { it.name == "nativeMain" }.configureEach {
-    kotlin.setSrcDirs(emptyList<Any>())
-}
-kotlin.sourceSets.matching { it.name in setOf("macosArm64Main", "linuxX64Main") }.configureEach {
-    kotlin.srcDir("src/nativeMain/kotlin")
-}
-
-val cinteropTask = "cinteropFtxui_c${nativeTargetName.replaceFirstChar { it.uppercase() }}"
-tasks.getByName(cinteropTask).dependsOn(extractFtxuiC)
+// Both cinterop tasks need headers from the extract step — the non-host also uses the host's archive.
+tasks.getByName("cinteropFtxui_cMacosArm64").dependsOn(extractFtxuiC)
+tasks.getByName("cinteropFtxui_cLinuxX64").dependsOn(extractFtxuiC)
