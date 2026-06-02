@@ -78,3 +78,48 @@ class ElementTest {
         }
     }
 }
+
+class StyledTextTest {
+
+    @Test
+    fun styledTextSingleSpan() {
+        styledText { span("hello") { bold() } }
+    }
+
+    @Test
+    fun styledTextMultipleSpans() {
+        styledText {
+            span("Hello") { bold(); color(Color.Red) }
+            span(", ")
+            span("World!") { italic(); color(Color.Blue) }
+        }
+    }
+
+    @Test
+    fun styledTextUnstyled() {
+        styledText { span("plain") }
+    }
+
+    @Test
+    fun styledTextEmptyProducesEmptyElement() {
+        styledText {}
+    }
+
+    @Test
+    fun styledTextAllDecorators() {
+        styledText {
+            span("full") {
+                bold()
+                italic()
+                dim()
+                inverted()
+                underlined()
+                underlinedDouble()
+                blink()
+                strikethrough()
+                color(Color.Green)
+                bgcolor(Color.Black)
+            }
+        }
+    }
+}
