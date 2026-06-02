@@ -1,9 +1,4 @@
----
-name: ftxui-kt-menu
-description: menu(), menuHorizontal(), menuToggle(), menuEntry(), and animated menu components.
-license: MIT
-compatibility: opencode
----
+# Menu
 
 Menus present a list of selectable entries. The selected index is stored in `IntState` or a `KMutableProperty0<Int>`.
 

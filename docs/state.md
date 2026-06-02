@@ -1,9 +1,4 @@
----
-name: ftxui-kt-state
-description: State holder classes (BoolState, IntState, StringState, FloatState) for bridging Kotlin values into native FTXUI component state.
-license: MIT
-compatibility: opencode
----
+# State
 
 Interactive components (checkbox, slider, menu, input, etc.) need a native-heap-backed buffer that FTXUI can read/write. The state classes wrap these buffers.
 

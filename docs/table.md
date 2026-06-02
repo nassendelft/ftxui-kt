@@ -1,9 +1,4 @@
----
-name: ftxui-kt-table
-description: Table and TableSelection — render 2D string data as a styled table element.
-license: MIT
-compatibility: opencode
----
+# Table
 
 `Table` renders a `List<List<String>>` as a grid. Apply styling through `TableSelection` before calling `render()`.
 

@@ -1,9 +1,4 @@
----
-name: ftxui-kt-app
-description: FtxUIApp, FtxUILoop, and FtxUIEvent — application lifecycle and event loop in ftxui-kt.
-license: MIT
-compatibility: opencode
----
+# App lifecycle
 
 `FtxUIApp` is the entry point. Create one, call `loop()` with a root component, and destroy it when done.
 
@@ -33,10 +28,35 @@ button("Quit", exitApp)
 app.exit()
 ```
 
+## Input/mouse options
+
+```kotlin
+app.trackMouse()                 // enable mouse event tracking
+app.handlePipedInput()           // accept input from a pipe
+app.forceHandleCtrlC()           // intercept Ctrl-C before the OS does
+app.forceHandleCtrlZ()           // intercept Ctrl-Z before the OS does
+```
+
+## Posting work from another thread
+
+```kotlin
+app.post {
+    // runs on the event-loop thread, safe to mutate state and trigger rerender
+}
+```
+
+## Restoring the terminal temporarily
+
+```kotlin
+app.withRestoredIO {
+    // terminal is in normal mode here — useful for spawning a subprocess with a PTY
+}
+```
+
 ## Clipboard selection
 
 ```kotlin
-app.selectionChange { 
+app.selectionChange {
     val selected = app.getSelection()
     // handle clipboard text
 }

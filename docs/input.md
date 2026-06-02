@@ -1,9 +1,4 @@
----
-name: ftxui-kt-input
-description: input() and inputPassword() components for single-line text entry, with event-based validation.
-license: MIT
-compatibility: opencode
----
+# Input
 
 ## Signatures
 
@@ -48,7 +43,6 @@ val inputs = vertical(
 val r = renderer(inputs) {
     vbox(
         hbox(text("First : "), inputs.render()),
-        // or render each child individually
     ).border()
 }
 ```

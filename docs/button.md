@@ -1,9 +1,4 @@
----
-name: ftxui-kt-button
-description: button() component and ButtonOption — creating clickable buttons with various styles and custom transforms.
-license: MIT
-compatibility: opencode
----
+# Button
 
 ## Signature
 
@@ -77,6 +72,21 @@ val layout = horizontal(dec, inc)
 val component = renderer(layout) {
     hbox(dec.render(), inc.render()).border()
 }
+```
+
+## Named argument note
+
+Because `button` has a third `options` parameter after `onClick`, Kotlin's trailing lambda syntax does not work when the call is prefixed with `+` in DSL contexts. Use a named argument instead:
+
+```kotlin
+// Correct
++button("Click me", onClick = { doSomething() })
+
+// Also correct (explicit parentheses)
++(button("Click me") { doSomething() })
+
+// Wrong — the lambda is parsed as a separate expression, not as onClick
++button("Click me") { doSomething() }
 ```
 
 ## Memory

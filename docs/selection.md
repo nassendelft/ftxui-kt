@@ -1,9 +1,4 @@
----
-name: ftxui-kt-selection
-description: checkbox(), radiobox(), and toggle() components for boolean and single-choice selection.
-license: MIT
-compatibility: opencode
----
+# Selection
 
 ## Checkbox
 

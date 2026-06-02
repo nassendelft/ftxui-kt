@@ -1,9 +1,4 @@
----
-name: ftxui-kt-linear-gradient
-description: LinearGradient — define multi-stop color gradients for element foreground and background.
-license: MIT
-compatibility: opencode
----
+# Linear Gradient
 
 `LinearGradient` defines a gradient with an angle and one or more color stops. Apply it to elements via `colorLinearGradient()` (foreground) or `bgcolorLinearGradient()` (background).
 

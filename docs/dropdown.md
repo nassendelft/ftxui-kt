@@ -1,9 +1,4 @@
----
-name: ftxui-kt-dropdown
-description: dropdown() and dropdownCustom() components — collapsible selection lists.
-license: MIT
-compatibility: opencode
----
+# Dropdown
 
 ## Basic dropdown
 

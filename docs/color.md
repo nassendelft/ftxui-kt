@@ -1,9 +1,4 @@
----
-name: ftxui-kt-color
-description: Color class — palette constants, RGB/HSV constructors, interpolation, and blending in ftxui-kt.
-license: MIT
-compatibility: opencode
----
+# Color
 
 `Color` wraps an FTXUI color handle. Use it with `element.color()`, `element.bgcolor()`, and any component option that takes a `Color`.
 

@@ -2,6 +2,8 @@
 
 Kotlin/Native bindings for [ftxui](https://github.com/ArthurSonzogni/FTXUI), a C++ terminal UI library. No cmake or C++ toolchain required — pre-built binaries are downloaded automatically at build time.
 
+Full API reference: **[docs/](docs/)**
+
 ## Modules
 
 | Module | Package | Description |

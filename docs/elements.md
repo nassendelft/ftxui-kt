@@ -1,9 +1,4 @@
----
-name: ftxui-kt-elements
-description: DOM element factory functions — text, gauge, separator, layout boxes, paragraph, spinner, filler, and more.
-license: MIT
-compatibility: opencode
----
+# Elements
 
 Elements are non-interactive, renderable pieces of UI. They are created fresh each frame inside a `renderer` callback. All functions return `Element`.
 

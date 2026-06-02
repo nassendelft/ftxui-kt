@@ -1,9 +1,4 @@
----
-name: ftxui-kt-slider
-description: slider() component — horizontal and directional sliders for Int and Float values.
-license: MIT
-compatibility: opencode
----
+# Slider
 
 ## Int slider (horizontal, with label)
 

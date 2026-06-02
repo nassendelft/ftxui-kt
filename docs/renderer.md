@@ -1,9 +1,4 @@
----
-name: ftxui-kt-renderer
-description: renderer(), focusableRenderer(), decorateRender(), and catchEvent() — custom rendering and event handling.
-license: MIT
-compatibility: opencode
----
+# Renderer
 
 ## renderer
 
@@ -82,7 +77,7 @@ fun Component.catchEvent(handler: (FtxUIEvent) -> Boolean): Component
 val withEsc = myComponent.catchEvent { event ->
     when {
         event.character == "q" -> { app.exit(); true }
-        event.input == "\x1B" -> { handleEscape(); true }
+        event.input == Key.Escape -> { handleEscape(); true }
         event.isMouse -> {
             mouseX = event.mouseX
             mouseY = event.mouseY
@@ -100,6 +95,8 @@ val withEsc = myComponent.catchEvent { event ->
 - `character: String` — single char if `isCharacter`
 - `isMouse: Boolean`
 - `mouseX: Int`, `mouseY: Int` — terminal coordinates (1-indexed)
+
+See [keyboard.md](keyboard.md) for the `Key` constants to match against `event.input`.
 
 ## Ownership rules
 

@@ -1,9 +1,4 @@
----
-name: ftxui-kt-decorators
-description: Element and Component decorator extension functions — borders, colors, text styles, flex, size, alignment, focus, and selection.
-license: MIT
-compatibility: opencode
----
+# Decorators
 
 Decorators are extension functions on `Element` (and some on `Component`) that wrap the target in a new styled element. They chain fluently.
 

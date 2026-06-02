@@ -1,9 +1,4 @@
----
-name: ftxui-kt-flexbox
-description: flexbox() element with FlexboxConfig — CSS-like flexible box layout for wrapping and aligning elements.
-license: MIT
-compatibility: opencode
----
+# Flexbox
 
 `flexbox()` arranges elements in a flex container, similar to CSS flexbox. Use it for wrapping galleries, tag clouds, or any layout that should reflow based on available width.
 

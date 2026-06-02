@@ -1,9 +1,4 @@
----
-name: ftxui-kt-containers
-description: Container components — horizontal, vertical, tab, stacked, collapsible, maybe, modal, and resizableSplit.
-license: MIT
-compatibility: opencode
----
+# Containers
 
 ## horizontal / vertical
 
@@ -163,5 +158,5 @@ val layout = vertical(poller, mainComponent)
 
 ## Memory
 
-- `CollapsibleComponent`, `maybe`, `modal`, and `resizableSplit` transfer ownership of their children — do not destroy children separately.
+- `collapsible`, `maybe`, `modal`, and `resizableSplit` transfer ownership of their children — do not destroy children separately.
 - `IntState`/`BoolState` passed to these components must be freed by the caller.

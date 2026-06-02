@@ -1,9 +1,4 @@
----
-name: ftxui-kt-window
-description: windowComponent() and WindowOptions — a draggable/resizable floating window component.
-license: MIT
-compatibility: opencode
----
+# Window
 
 `windowComponent()` creates a floating window that the user can drag and resize with the mouse. Position and size are stored in `IntState` objects.
 

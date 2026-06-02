@@ -1,9 +1,4 @@
----
-name: ftxui-kt-graph
-description: graph() element and GraphFn — bar/line graph rendering from a callback that fills a height array.
-license: MIT
-compatibility: opencode
----
+# Graph
 
 `graph()` renders a bar chart from a callback that fills an `IntArray` with column heights.
 
@@ -28,8 +23,6 @@ val fn = GraphFn { width, height, output ->
     }
 }
 
-val graphElement = graph(fn)
-// Use graphElement inside a renderer:
 val comp = renderer {
     graph(fn).border()
 }

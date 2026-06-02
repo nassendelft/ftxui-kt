@@ -1,9 +1,4 @@
----
-name: ftxui-kt-canvas
-description: Canvas — pixel/block-level 2D drawing surface for graphics, plots, and animations.
-license: MIT
-compatibility: opencode
----
+# Canvas
 
 `Canvas` provides a 2D drawing surface. Create it each frame inside a `renderer` callback, draw onto it, then call `toElement()` to produce a renderable `Element`.
 
