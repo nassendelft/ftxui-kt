@@ -14,6 +14,37 @@ paragraphAlignCenter("text")
 paragraphAlignJustify("text")
 ```
 
+## Styled text
+
+`styledText` composes inline runs of text with independent per-span styling. Multiple spans are automatically combined into a horizontal element.
+
+```kotlin
+styledText {
+    span("Hello") { bold(); color(Color.Red) }
+    span(", ")
+    span("World!") { italic(); color(Color.Blue) }
+}
+```
+
+Available style functions inside a `span` block:
+
+```kotlin
+span("text") {
+    bold()
+    italic()
+    dim()
+    inverted()           // swap fg/bg
+    underlined()
+    underlinedDouble()
+    blink()
+    strikethrough()
+    color(Color.Green)   // foreground
+    bgcolor(Color.Black) // background
+}
+```
+
+A single span returns the element directly without wrapping. An empty `styledText {}` produces an empty text element.
+
 ## Gauge (progress bar)
 
 ```kotlin
