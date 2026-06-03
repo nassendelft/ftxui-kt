@@ -899,6 +899,30 @@ private fun boolStateSynced(
         .also { it.cleanups.add { nativeHeap.free(native) } }
 }
 
+// Same as intStateSynced but for Float state.
+private fun floatStateSynced(
+    initial: Float,
+    prop: KMutableProperty0<Float>,
+    createInner: (CPointer<FloatVar>) -> Component,
+): Component {
+    val native = nativeHeap.alloc<FloatVar>().also { it.value = initial }
+    val inner = createInner(native.ptr)
+    return syncWrapper(inner, prop, { native.value }, { native.value = it })
+        .also { it.cleanups.add { nativeHeap.free(native) } }
+}
+
+// Same as intStateSynced but for String state via StringState (ftxui_string_handle).
+private fun stringStateSynced(
+    initial: String,
+    prop: KMutableProperty0<String>,
+    createInner: (StringState) -> Component,
+): Component {
+    val state = StringState(initial)
+    val inner = createInner(state)
+    return syncWrapper(inner, prop, { state.value }, { state.value = it })
+        .also { it.cleanups.add { state.destroy() } }
+}
+
 // -- Component decorators
 // These wrap the component in a Renderer and transfer ownership: the source component's
 // handle will be destroyed when the returned component is destroyed.
@@ -935,6 +959,10 @@ fun Component.alignRight() = wrapOwning(ftxui_component_align_right(handle)!!)
 
 fun Component.nothing() = wrapOwning(ftxui_component_nothing(handle)!!)
 fun Component.hoverable(hover: BoolState) = wrapOwning(ftxui_component_hoverable(handle, hover.ptr)!!)
+fun Component.hoverable(hover: KMutableProperty0<Boolean>): Component =
+    boolStateSynced(hover.get(), hover) { ptr ->
+        wrapOwning(ftxui_component_hoverable(handle, ptr)!!)
+    }
 
 fun Component.hoverable(onEnter: () -> Unit, onLeave: () -> Unit): Component {
     val enterRef = StableRef.create(onEnter)
@@ -1303,9 +1331,27 @@ fun modal(main: Component, modal: Component, showModal: BoolState): Component =
 // The native buffer is managed internally and freed when the component is destroyed.
 // No manual state management required.
 
+fun input(content: KMutableProperty0<String>, placeholder: String = ""): Component =
+    stringStateSynced(content.get(), content) { state ->
+        input(state, placeholder)
+    }
+
+fun inputPassword(content: KMutableProperty0<String>, placeholder: String = ""): Component =
+    stringStateSynced(content.get(), content) { state ->
+        inputPassword(state, placeholder)
+    }
+
 fun checkbox(label: String, checked: KMutableProperty0<Boolean>): Component =
     boolStateSynced(checked.get(), checked) { ptr ->
         Component(ftxui_component_checkbox(label, ptr)!!)
+    }
+
+fun checkbox(label: String, checked: KMutableProperty0<Boolean>, onChange: () -> Unit): Component =
+    boolStateSynced(checked.get(), checked) { ptr ->
+        val ref = StableRef.create(onChange)
+        Component(ftxui_component_checkbox_with_change(label, ptr, callbackBridge, ref.asCPointer())!!).also {
+            it.cleanups.add { ref.dispose() }
+        }
     }
 
 fun toggle(entries: List<String>, selected: KMutableProperty0<Int>): Component =
@@ -1322,6 +1368,38 @@ fun slider(label: String, value: KMutableProperty0<Int>, min: Int, max: Int, inc
         Component(ftxui_component_slider(label, ptr, min, max, increment)!!)
     }
 
+fun slider(value: KMutableProperty0<Int>, min: Int, max: Int, increment: Int = 1, direction: Direction): Component =
+    intStateSynced(value.get(), value) { ptr ->
+        Component(ftxui_component_slider_int_direction(ptr, min, max, increment, direction.value)!!)
+    }
+
+fun slider(value: KMutableProperty0<Int>, min: Int, max: Int, increment: Int = 1, onChange: () -> Unit): Component =
+    intStateSynced(value.get(), value) { ptr ->
+        val ref = StableRef.create(onChange)
+        Component(ftxui_component_slider_int_with_change(ptr, min, max, increment, callbackBridge, ref.asCPointer())!!).also {
+            it.cleanups.add { ref.dispose() }
+        }
+    }
+
+fun slider(label: String, value: KMutableProperty0<Float>, min: Float, max: Float, increment: Float = 1f): Component =
+    floatStateSynced(value.get(), value) { ptr ->
+        Component(ftxui_component_slider_float(label, ptr, min, max, increment)!!)
+    }
+
+fun slider(value: KMutableProperty0<Float>, min: Float, max: Float, increment: Float = 1f, onChange: () -> Unit): Component =
+    floatStateSynced(value.get(), value) { ptr ->
+        val ref = StableRef.create(onChange)
+        Component(ftxui_component_slider_float_with_change(ptr, min, max, increment, callbackBridge, ref.asCPointer())!!).also {
+            it.cleanups.add { ref.dispose() }
+        }
+    }
+
+fun slider(value: KMutableProperty0<Float>, min: Float, max: Float, increment: Float = 1f, direction: Direction,
+           colorActive: Color? = null, colorInactive: Color? = null): Component =
+    floatStateSynced(value.get(), value) { ptr ->
+        Component(ftxui_component_slider_float_direction(ptr, min, max, increment, direction.value, colorActive?.handle, colorInactive?.handle)!!)
+    }
+
 fun radiobox(entries: List<String>, selected: KMutableProperty0<Int>): Component =
     intStateSynced(selected.get(), selected) { ptr ->
         memScoped {
@@ -1331,12 +1409,56 @@ fun radiobox(entries: List<String>, selected: KMutableProperty0<Int>): Component
         }
     }
 
+fun radiobox(entries: List<String>, selected: KMutableProperty0<Int>, onChange: () -> Unit): Component =
+    intStateSynced(selected.get(), selected) { ptr ->
+        val ref = StableRef.create(onChange)
+        memScoped {
+            val ptrs = allocArray<CPointerVar<ByteVar>>(entries.size)
+            entries.forEachIndexed { i, s -> ptrs[i] = s.cstr.getPointer(this) }
+            Component(ftxui_component_radiobox_with_change(ptrs, entries.size, ptr, callbackBridge, ref.asCPointer())!!).also {
+                it.cleanups.add { ref.dispose() }
+            }
+        }
+    }
+
 fun menu(entries: List<String>, selected: KMutableProperty0<Int>): Component =
     intStateSynced(selected.get(), selected) { ptr ->
         memScoped {
             val ptrs = allocArray<CPointerVar<ByteVar>>(entries.size)
             entries.forEachIndexed { i, s -> ptrs[i] = s.cstr.getPointer(this) }
             Component(ftxui_component_menu(ptrs, entries.size, ptr)!!)
+        }
+    }
+
+fun menu(
+    entries: List<String>,
+    selected: KMutableProperty0<Int>,
+    onChange: (() -> Unit)? = null,
+    onEnter: (() -> Unit)? = null,
+): Component =
+    intStateSynced(selected.get(), selected) { ptr ->
+        val changeRef = onChange?.let { StableRef.create(it) }
+        val enterRef = onEnter?.let { StableRef.create(it) }
+        memScoped {
+            val ptrs = allocArray<CPointerVar<ByteVar>>(entries.size)
+            entries.forEachIndexed { i, s -> ptrs[i] = s.cstr.getPointer(this) }
+            Component(ftxui_component_menu_with_callbacks(
+                ptrs, entries.size, ptr,
+                if (changeRef != null) callbackBridge else null, changeRef?.asCPointer(),
+                if (enterRef != null) callbackBridge else null, enterRef?.asCPointer(),
+            )!!).also { c ->
+                changeRef?.let { c.cleanups.add { it.dispose() } }
+                enterRef?.let { c.cleanups.add { it.dispose() } }
+            }
+        }
+    }
+
+fun menuHorizontal(entries: List<String>, selected: KMutableProperty0<Int>): Component =
+    intStateSynced(selected.get(), selected) { ptr ->
+        memScoped {
+            val ptrs = allocArray<CPointerVar<ByteVar>>(entries.size)
+            entries.forEachIndexed { i, s -> ptrs[i] = s.cstr.getPointer(this) }
+            Component(ftxui_component_menu_horizontal(ptrs, entries.size, ptr)!!)
         }
     }
 
