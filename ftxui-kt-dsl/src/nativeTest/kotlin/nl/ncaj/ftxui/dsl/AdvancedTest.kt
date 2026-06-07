@@ -1,6 +1,6 @@
-package nl.ncaj.dsl
+package nl.ncaj.ftxui.dsl
 
-import nl.ncaj.*
+import nl.ncaj.ftxui.*
 import kotlin.test.Test
 
 private fun testApp(block: AppScope.() -> Component) {

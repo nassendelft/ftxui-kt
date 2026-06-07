@@ -1,6 +1,6 @@
-package nl.ncaj.dsl
+package nl.ncaj.ftxui.dsl
 
-import nl.ncaj.*
+import nl.ncaj.ftxui.*
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue

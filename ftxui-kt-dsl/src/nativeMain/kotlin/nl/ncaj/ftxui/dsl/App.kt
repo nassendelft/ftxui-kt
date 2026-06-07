@@ -1,6 +1,6 @@
-package nl.ncaj.dsl
+package nl.ncaj.ftxui.dsl
 
-import nl.ncaj.*
+import nl.ncaj.ftxui.*
 
 class AppScope internal constructor(internal val app: FtxUIApp) {
     private val resources = mutableListOf<AutoCloseable>()
@@ -10,7 +10,7 @@ class AppScope internal constructor(internal val app: FtxUIApp) {
 
     fun exit() = app.exit()
     fun post(block: () -> Unit) = app.post(block)
-    fun poll(onPoll: () -> Unit): Component = nl.ncaj.poll(app, onPoll)
+    fun poll(onPoll: () -> Unit): Component = nl.ncaj.ftxui.poll(app, onPoll)
     fun requestAnimationFrame() = app.requestAnimationFrame()
     fun selectionChange(callback: () -> Unit) = app.selectionChange(callback)
     fun getSelection(): String = app.getSelection()

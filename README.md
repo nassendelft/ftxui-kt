@@ -8,14 +8,14 @@ Full API reference: **[docs/](docs/)**
 
 | Module | Package | Description |
 |---|---|---|
-| `ftxui-kt` | `nl.ncaj` | Low-level Kotlin wrapper over the ftxui C API |
-| `ftxui-kt-dsl` | `nl.ncaj.dsl` | Idiomatic Kotlin DSL — no state objects, no manual memory management |
+| `ftxui-kt` | `nl.ncaj.ftxui` | Low-level Kotlin wrapper over the ftxui C API |
+| `ftxui-kt-dsl` | `nl.ncaj.ftxui.dsl` | Idiomatic Kotlin DSL — no state objects, no manual memory management |
 
 ## Quick start
 
 ```kotlin
-import nl.ncaj.*
-import nl.ncaj.dsl.*
+import nl.ncaj.ftxui.*
+import nl.ncaj.ftxui.dsl.*
 
 // State vars must be class or top-level properties, not local variables.
 // See "State" section below for details.
@@ -59,15 +59,15 @@ Add to your `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("nl.ncaj:ftxui-kt-dsl:<version>")
+    implementation("nl.ncaj.ftxui:ftxui-kt-dsl:<version>")
 }
 ```
 
 Import both packages:
 
 ```kotlin
-import nl.ncaj.*       // element factories, decorators, Color, Key, etc.
-import nl.ncaj.dsl.*   // app entry points, container/element builders
+import nl.ncaj.ftxui.*       // element factories, decorators, Color, Key, etc.
+import nl.ncaj.ftxui.dsl.*   // app entry points, container/element builders
 ```
 
 ### ftxui-kt (low-level)
@@ -76,7 +76,7 @@ Use directly if you need full control over resource lifetimes:
 
 ```kotlin
 dependencies {
-    implementation("nl.ncaj:ftxui-kt:<version>")
+    implementation("nl.ncaj.ftxui:ftxui-kt:<version>")
 }
 ```
 

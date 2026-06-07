@@ -1,6 +1,6 @@
-package nl.ncaj.dsl
+package nl.ncaj.ftxui.dsl
 
-import nl.ncaj.*
+import nl.ncaj.ftxui.*
 import kotlin.reflect.KMutableProperty0
 
 class ContainerScope {
@@ -9,20 +9,20 @@ class ContainerScope {
 }
 
 fun vertical(block: ContainerScope.() -> Unit): ContainerComponent =
-    ContainerScope().apply(block).children.let { nl.ncaj.vertical(*it.toTypedArray()) }
+    ContainerScope().apply(block).children.let { nl.ncaj.ftxui.vertical(*it.toTypedArray()) }
 
 fun horizontal(block: ContainerScope.() -> Unit): ContainerComponent =
-    ContainerScope().apply(block).children.let { nl.ncaj.horizontal(*it.toTypedArray()) }
+    ContainerScope().apply(block).children.let { nl.ncaj.ftxui.horizontal(*it.toTypedArray()) }
 
 fun stacked(block: ContainerScope.() -> Unit): ContainerComponent =
     ContainerScope().apply(block).children.let { children ->
-        nl.ncaj.stacked().also { c -> children.forEach(c::add) }
+        nl.ncaj.ftxui.stacked().also { c -> children.forEach(c::add) }
     }
 
 // tab needs AppScope.track() to manage the IntState lifetime.
 fun AppScope.tab(selected: KMutableProperty0<Int>, block: ContainerScope.() -> Unit): Component =
     intSync(selected) { state ->
-        val container = nl.ncaj.tab(state)
+        val container = nl.ncaj.ftxui.tab(state)
         ContainerScope().apply(block).children.forEach(container::add)
         container
     }

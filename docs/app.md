@@ -33,8 +33,11 @@ app.exit()
 ```kotlin
 app.trackMouse()                 // enable mouse event tracking
 app.handlePipedInput()           // accept input from a pipe
-app.forceHandleCtrlC()           // intercept Ctrl-C before the OS does
-app.forceHandleCtrlZ()           // intercept Ctrl-Z before the OS does
+// FTXUI raises SIGINT/SIGTSTP on Ctrl-C/Ctrl-Z by default (force = true),
+// even if your component handles the event. Pass false to let your own
+// component's handling take effect instead:
+app.forceHandleCtrlC(false)
+app.forceHandleCtrlZ(false)
 ```
 
 ## Posting work from another thread

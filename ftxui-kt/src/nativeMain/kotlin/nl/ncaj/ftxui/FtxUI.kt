@@ -1,6 +1,6 @@
 @file:OptIn(ExperimentalForeignApi::class)
 
-package nl.ncaj
+package nl.ncaj.ftxui
 
 import ftxui_c.*
 import kotlinx.cinterop.*
@@ -179,7 +179,14 @@ class FtxUIApp internal constructor(internal val handle: ftxui_app_handle_t) : A
 
     fun trackMouse(enable: Boolean = true) = ftxui_app_track_mouse(handle, enable)
     fun handlePipedInput(enable: Boolean = true) = ftxui_app_handle_piped_input(handle, enable)
+    /**
+     * When [force] is true (the default), FTXUI always raises SIGINT on Ctrl-C,
+     * even if a component's `onEvent` handles the event. Pass false to let your
+     * own handling of the Ctrl-C event take effect instead.
+     */
     fun forceHandleCtrlC(force: Boolean = true) = ftxui_app_force_handle_ctrl_c(handle, force)
+
+    /** Same as [forceHandleCtrlC] but for Ctrl-Z (raises SIGTSTP). */
     fun forceHandleCtrlZ(force: Boolean = true) = ftxui_app_force_handle_ctrl_z(handle, force)
 
     fun post(closure: () -> Unit) {

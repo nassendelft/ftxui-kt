@@ -1,6 +1,6 @@
-package nl.ncaj.dsl
+package nl.ncaj.ftxui.dsl
 
-import nl.ncaj.*
+import nl.ncaj.ftxui.*
 
 // Canvas: created and drawn inside the lambda; the element is returned.
 // The Canvas is tracked in AppScope and freed after the app loop exits.

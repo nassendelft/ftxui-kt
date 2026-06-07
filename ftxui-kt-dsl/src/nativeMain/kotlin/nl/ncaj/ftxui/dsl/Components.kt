@@ -1,6 +1,6 @@
-package nl.ncaj.dsl
+package nl.ncaj.ftxui.dsl
 
-import nl.ncaj.*
+import nl.ncaj.ftxui.*
 import kotlin.reflect.KMutableProperty0
 
 // KMutableProperty0<String> overloads missing in ftxui-kt.
@@ -9,18 +9,18 @@ import kotlin.reflect.KMutableProperty0
 fun AppScope.input(
     content: KMutableProperty0<String>,
     placeholder: String = "",
-): Component = stringSync(content) { state -> nl.ncaj.input(state, placeholder) }
+): Component = stringSync(content) { state -> nl.ncaj.ftxui.input(state, placeholder) }
 
 fun AppScope.inputPassword(
     content: KMutableProperty0<String>,
     placeholder: String = "",
-): Component = stringSync(content) { state -> nl.ncaj.inputPassword(state, placeholder) }
+): Component = stringSync(content) { state -> nl.ncaj.ftxui.inputPassword(state, placeholder) }
 
 // KMutableProperty0<Int> overload missing in ftxui-kt for menuHorizontal.
 fun AppScope.menuHorizontal(
     entries: List<String>,
     selected: KMutableProperty0<Int>,
-): Component = intSync(selected) { state -> nl.ncaj.menuHorizontal(entries, state) }
+): Component = intSync(selected) { state -> nl.ncaj.ftxui.menuHorizontal(entries, state) }
 
 // KMutableProperty0<Float> overloads missing in ftxui-kt for float slider.
 fun AppScope.slider(
@@ -29,7 +29,7 @@ fun AppScope.slider(
     min: Float,
     max: Float,
     increment: Float = 1f,
-): Component = floatSync(value) { state -> nl.ncaj.slider(label, state, min, max, increment) }
+): Component = floatSync(value) { state -> nl.ncaj.ftxui.slider(label, state, min, max, increment) }
 
 fun AppScope.slider(
     value: KMutableProperty0<Float>,
@@ -37,7 +37,7 @@ fun AppScope.slider(
     max: Float,
     increment: Float = 1f,
     onChange: () -> Unit,
-): Component = floatSync(value) { state -> nl.ncaj.slider(state, min, max, increment, onChange) }
+): Component = floatSync(value) { state -> nl.ncaj.ftxui.slider(state, min, max, increment, onChange) }
 
 fun AppScope.slider(
     value: KMutableProperty0<Float>,
@@ -48,5 +48,5 @@ fun AppScope.slider(
     colorActive: Color? = null,
     colorInactive: Color? = null,
 ): Component = floatSync(value) { state ->
-    nl.ncaj.slider(state, min, max, increment, direction, colorActive, colorInactive)
+    nl.ncaj.ftxui.slider(state, min, max, increment, direction, colorActive, colorInactive)
 }

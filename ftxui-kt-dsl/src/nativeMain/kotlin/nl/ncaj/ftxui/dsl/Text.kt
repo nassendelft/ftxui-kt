@@ -1,6 +1,6 @@
-package nl.ncaj.dsl
+package nl.ncaj.ftxui.dsl
 
-import nl.ncaj.*
+import nl.ncaj.ftxui.*
 
 class SpanStyle internal constructor(element: Element) {
     internal var element: Element = element
@@ -22,19 +22,19 @@ class SpanScope {
     internal val spans = mutableListOf<Element>()
 
     fun span(text: String) {
-        spans.add(nl.ncaj.text(text))
+        spans.add(nl.ncaj.ftxui.text(text))
     }
 
     fun span(text: String, style: SpanStyle.() -> Unit) {
-        spans.add(SpanStyle(nl.ncaj.text(text)).apply(style).element)
+        spans.add(SpanStyle(nl.ncaj.ftxui.text(text)).apply(style).element)
     }
 }
 
 fun styledText(block: SpanScope.() -> Unit): Element {
     val spans = SpanScope().apply(block).spans
     return when (spans.size) {
-        0 -> nl.ncaj.text("")
+        0 -> nl.ncaj.ftxui.text("")
         1 -> spans[0]
-        else -> nl.ncaj.hbox(*spans.toTypedArray())
+        else -> nl.ncaj.ftxui.hbox(*spans.toTypedArray())
     }
 }
