@@ -1,3 +1,5 @@
+import java.io.IOException
+import java.net.HttpURLConnection
 import java.net.URI
 
 plugins {
@@ -41,8 +43,23 @@ val downloadFtxuiC = tasks.register("downloadFtxuiC") {
     doLast {
         val dest = archiveFile.get().asFile
         val url = "https://github.com/nassendelft/ftxui-c/releases/download/$ftxuiCVersion/$archiveName"
-        logger.lifecycle("Downloading $url")
-        URI(url).toURL().openStream().use { input -> dest.outputStream().use { input.copyTo(it) } }
+        val maxAttempts = 5
+        for (attempt in 1..maxAttempts) {
+            logger.lifecycle("Downloading $url (attempt $attempt/$maxAttempts)")
+            try {
+                val connection = URI(url).toURL().openConnection() as HttpURLConnection
+                connection.connectTimeout = 30_000
+                connection.readTimeout = 60_000
+                connection.instanceFollowRedirects = true
+                connection.inputStream.use { input -> dest.outputStream().use { input.copyTo(it) } }
+                return@doLast
+            } catch (e: IOException) {
+                if (attempt == maxAttempts) throw e
+                val backoffSeconds = attempt * 5L
+                logger.lifecycle("Download failed (${e.message}), retrying in ${backoffSeconds}s...")
+                Thread.sleep(backoffSeconds * 1000)
+            }
+        }
     }
 }
 
