@@ -104,6 +104,13 @@ data class EntryState(
 // by decorators stay alive as long as the C++ tree references them.
 open class Component internal constructor(internal val handle: ComponentHandle) {
     private val cleaner = createCleaner(handle) { ftxui_component_destroy(it) }
+
+    override fun equals(other: Any?): Boolean {
+        if (other !is Component) return false
+        return handle == other.handle
+    }
+
+    override fun hashCode(): Int = handle.hashCode()
 }
 
 // add() copies the child into the container on the C++ side (its own shared_ptr reference),
