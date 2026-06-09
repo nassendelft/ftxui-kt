@@ -1,15 +1,20 @@
-@file:OptIn(ExperimentalForeignApi::class)
+@file:OptIn(ExperimentalForeignApi::class, ExperimentalNativeApi::class)
 
 package nl.ncaj.ftxui
 
 import ftxui_c.*
 import kotlinx.cinterop.*
+import kotlin.experimental.ExperimentalNativeApi
+import kotlin.native.ref.createCleaner
 import kotlin.reflect.KMutableProperty0
 
 internal typealias ComponentHandle = ftxui_component_handle_t
 internal typealias ElementHandle = ftxui_element_handle_t
 
-class Color internal constructor(internal val handle: ftxui_color_handle_t?) : AutoCloseable {
+class Color internal constructor(internal val handle: ftxui_color_handle_t?) {
+    @OptIn(ExperimentalStdlibApi::class)
+    private val cleaner = createCleaner(handle) { it?.let(::ftxui_color_destroy) }
+
     companion object {
         val Black = Color(ftxui_color_palette16(FTXUI_PALETTE16_BLACK))
         val Red = Color(ftxui_color_palette16(FTXUI_PALETTE16_RED))
@@ -56,9 +61,6 @@ class Color internal constructor(internal val handle: ftxui_color_handle_t?) : A
 
     fun print(isBackground: Boolean): String =
         ftxui_color_print(handle, isBackground)?.toKString() ?: ""
-
-    fun destroy() = ftxui_color_destroy(handle)
-    override fun close() = destroy()
 }
 
 enum class BorderStyle(internal val value: ftxui_border_style_t) {
@@ -96,30 +98,26 @@ data class EntryState(
     val index: Int
 )
 
-// cleanups run in registration order when destroy() is called.
-open class Component internal constructor(internal val handle: ComponentHandle) : AutoCloseable {
-    internal val cleanups = mutableListOf<() -> Unit>()
-
-    fun destroy() {
-        cleanups.forEach { it() }
-        cleanups.clear()
-        ftxui_component_destroy(handle)
-    }
-
-    override fun close() = destroy()
+// Each Component owns its native wrapper handle and frees it when this Kotlin object is
+// garbage collected. The underlying ftxui component is a shared_ptr on the C++ side, so
+// freeing one wrapper merely drops a reference — components added to containers or wrapped
+// by decorators stay alive as long as the C++ tree references them.
+open class Component internal constructor(internal val handle: ComponentHandle) {
+    private val cleaner = createCleaner(handle) { ftxui_component_free(it) }
 }
 
-// add() transfers ownership: the container's destroy() will also destroy the child handle.
-// Do not call destroy() on a child after adding it to a container.
+// add() copies the child into the container on the C++ side (its own shared_ptr reference),
+// so the child Component's own cleaner can still free its wrapper handle independently.
 class ContainerComponent internal constructor(handle: ComponentHandle) : Component(handle) {
     fun add(component: Component) {
         ftxui_container_add(handle, component.handle)
-        cleanups.addAll(component.cleanups)
-        cleanups.add { ftxui_component_destroy(component.handle) }
-        component.cleanups.clear()
     }
 }
 
+// Element is intentionally NOT Cleaner-managed: element ownership is transferred into the
+// C++ layer, which deletes the element wrapper when it consumes it (e.g. during render).
+// A GC-driven free would double-free on that path. Elements are short-lived values;
+// destroy() exists for the rare case of an element that is built but never handed to C++.
 class Element internal constructor(internal val handle: ElementHandle)
 
 fun Element.destroy() = ftxui_element_destroy(handle)
@@ -162,20 +160,15 @@ object Terminal {
     })
 }
 
-class FtxUIApp internal constructor(internal val handle: ftxui_app_handle_t) : AutoCloseable {
-    internal val cleanups = mutableListOf<() -> Unit>()
+// The app handle is freed when this Kotlin object is garbage collected. Note this means
+// teardown is non-deterministic; the app loop restores the terminal on exit and the app
+// object normally lives for the whole program, so this is fine in practice.
+class FtxUIApp internal constructor(internal val handle: ftxui_app_handle_t) {
+    private val cleaner = createCleaner(handle) { ftxui_app_destroy(it) }
 
     fun loop(root: Component) = ftxui_app_loop(handle, root.handle)
 
     fun exit() = ftxui_app_exit(handle)
-
-    fun destroy() {
-        cleanups.forEach { it() }
-        cleanups.clear()
-        ftxui_app_destroy(handle)
-    }
-
-    override fun close() = destroy()
 
     fun trackMouse(enable: Boolean = true) = ftxui_app_track_mouse(handle, enable)
     fun handlePipedInput(enable: Boolean = true) = ftxui_app_handle_piped_input(handle, enable)
@@ -192,11 +185,10 @@ class FtxUIApp internal constructor(internal val handle: ftxui_app_handle_t) : A
     fun post(closure: () -> Unit) {
         val stableRef = StableRef.create(closure)
         val cb = staticCFunction { refPtr: COpaquePointer? ->
-            val fn = refPtr!!.asStableRef<() -> Unit>().get()
-            fn()
-            refPtr.asStableRef<() -> Unit>().dispose()
+            refPtr!!.asStableRef<() -> Unit>().get()()
         }
-        ftxui_app_post(handle, cb, stableRef.asCPointer())
+        // ftxui-c disposes the StableRef via the destructor after running the callback.
+        ftxui_app_post(handle, cb, stableRef.asCPointer(), stableRefDestructor)
     }
 
     fun withRestoredIO(closure: () -> Unit) {
@@ -204,8 +196,8 @@ class FtxUIApp internal constructor(internal val handle: ftxui_app_handle_t) : A
         val cb = staticCFunction { refPtr: COpaquePointer? ->
             refPtr!!.asStableRef<() -> Unit>().get()()
         }
-        ftxui_app_with_restored_io(handle, cb, stableRef.asCPointer())
-        stableRef.dispose()
+        // ftxui-c disposes the StableRef via the destructor once the call returns.
+        ftxui_app_with_restored_io(handle, cb, stableRef.asCPointer(), stableRefDestructor)
     }
 
     fun selectionChange(callback: () -> Unit) {
@@ -213,8 +205,8 @@ class FtxUIApp internal constructor(internal val handle: ftxui_app_handle_t) : A
         val c = staticCFunction { refPtr: COpaquePointer? ->
             refPtr!!.asStableRef<() -> Unit>().get()()
         }
-        ftxui_app_selection_change(handle, c, stableRef.asCPointer())
-        cleanups.add { stableRef.dispose() }
+        // ftxui-c disposes the StableRef via the destructor when the callback is replaced/released.
+        ftxui_app_selection_change(handle, c, stableRef.asCPointer(), stableRefDestructor)
     }
 
     fun getSelection(): String {
@@ -243,26 +235,6 @@ class FtxUIApp internal constructor(internal val handle: ftxui_app_handle_t) : A
         fun fixedSize(dimx: Int, dimy: Int) = FtxUIApp(ftxui_app_create_fixed_size(dimx, dimy)!!)
         fun active(): FtxUIApp? = ftxui_app_active()?.let { FtxUIApp(it) }
     }
-}
-
-// Transfers cleanups from this component into a new wrapper component, and schedules
-// destruction of this component's handle when the wrapper is destroyed.
-// After calling this, only use and destroy the returned component.
-private fun Component.wrapOwning(newHandle: ComponentHandle): Component {
-    val new = Component(newHandle)
-    new.cleanups.addAll(cleanups)
-    new.cleanups.add { ftxui_component_destroy(handle) }
-    cleanups.clear()
-    return new
-}
-
-// Same as wrapOwning but takes ownership of two source components.
-private fun wrapOwning(a: Component, b: Component, newHandle: ComponentHandle): Component {
-    val new = a.wrapOwning(newHandle)
-    new.cleanups.addAll(b.cleanups)
-    new.cleanups.add { ftxui_component_destroy(b.handle) }
-    b.cleanups.clear()
-    return new
 }
 
 // -- Element decorators
@@ -433,8 +405,9 @@ fun vflow(vararg elements: Element): Element = memScoped {
 
 // -- Components
 
-// ownedColors holds Color objects created internally (e.g. interpolated) that must be
-// freed after the button component is constructed (C++ copies them at that point).
+// ownedColors anchors Color objects created internally (e.g. interpolated) so their
+// Cleaners don't free them before the button copies their values out of the handles.
+// They are released when this ButtonOption is garbage collected.
 class ButtonOption private constructor(internal val handle: CValue<ftxui_button_option_t>) {
     var transform: ((EntryState) -> Element)? = null
     internal val ownedColors = mutableListOf<Color>()
@@ -486,6 +459,10 @@ class ButtonOption private constructor(internal val handle: CValue<ftxui_button_
     }
 }
 
+private val stableRefDestructor = staticCFunction<COpaquePointer?, Unit> { refPtr ->
+    refPtr?.asStableRef<Any>()?.dispose()
+}
+
 fun button(
     label: String,
     onClick: () -> Unit,
@@ -497,11 +474,9 @@ fun button(
         Unit
     }
 
-    var transformStableRef: StableRef<(EntryState) -> Element>? = null
     val transform = options.transform
     if (transform != null) {
         val tsr = StableRef.create(transform)
-        transformStableRef = tsr
         options.handle.useContents {
             this.transform = staticCFunction { state: CValue<ftxui_entry_state_t>, refPtr: COpaquePointer? ->
                 state.useContents {
@@ -517,20 +492,16 @@ fun button(
                 }
             }
             this.transform_userdata = tsr.asCPointer()
+            this.transform_destructor = stableRefDestructor
         }
     }
 
-    val handle = ftxui_component_button_with_options(label, callback, clickStableRef.asCPointer(), options.handle)
-    // C++ has copied the color values out of the handles; safe to free them now.
-    options.ownedColors.forEach { it.destroy() }
-
-    return Component(handle!!).also { c ->
-        c.cleanups.add { clickStableRef.dispose() }
-        transformStableRef?.let { ref -> c.cleanups.add { ref.dispose() } }
-    }
+    val handle = ftxui_component_button_with_options(label, callback, clickStableRef.asCPointer(), stableRefDestructor, options.handle)
+    // The colors are freed via their Cleaners once `options` becomes unreachable.
+    return Component(handle!!)
 }
 
-// horizontal/vertical delegate to ContainerComponent.add(), which takes ownership of each child.
+// horizontal/vertical delegate to ContainerComponent.add(); each child manages its own handle.
 fun horizontal(vararg components: Component): ContainerComponent {
     val container = ContainerComponent(ftxui_component_container_horizontal()!!)
     for (component in components) container.add(component)
@@ -553,10 +524,8 @@ fun renderer(
         val block = refPtr!!.asStableRef<() -> Element>().get()
         block().handle
     } as ftxui_render_callback_t
-    val handle = ftxui_component_renderer(child?.handle, renderCallback, stableRef.asCPointer())!!
-    return (child?.wrapOwning(handle) ?: Component(handle)).also {
-        it.cleanups.add { stableRef.dispose() }
-    }
+    val handle = ftxui_component_renderer(child?.handle, renderCallback, stableRef.asCPointer(), stableRefDestructor)!!
+    return Component(handle)
 }
 
 fun focusableRenderer(callback: (focused: Boolean) -> Element): Component {
@@ -565,9 +534,7 @@ fun focusableRenderer(callback: (focused: Boolean) -> Element): Component {
     val renderCallback = staticCFunction { focused: Boolean, refPtr: COpaquePointer? ->
         refPtr!!.asStableRef<(Boolean) -> Element>().get()(focused).handle
     } as ftxui_focused_render_callback_t
-    return Component(ftxui_component_renderer_focusable(renderCallback, stableRef.asCPointer())!!).also {
-        it.cleanups.add { stableRef.dispose() }
-    }
+    return Component(ftxui_component_renderer_focusable(renderCallback, stableRef.asCPointer(), stableRefDestructor)!!)
 }
 
 fun Component.render() = Element(ftxui_component_render(this.handle)!!)
@@ -578,9 +545,7 @@ fun Component.decorateRender(transform: (Element) -> Element): Component {
     val callback = staticCFunction { innerHandle: ftxui_element_handle_t?, refPtr: COpaquePointer? ->
         refPtr!!.asStableRef<(Element) -> Element>().get()(Element(innerHandle!!)).handle
     } as ftxui_inner_render_callback_t
-    return wrapOwning(ftxui_component_renderer_with_inner(handle, callback, stableRef.asCPointer())!!).also {
-        it.cleanups.add { stableRef.dispose() }
-    }
+    return Component(ftxui_component_renderer_with_inner(handle, callback, stableRef.asCPointer(), stableRefDestructor)!!)
 }
 
 enum class MouseButton(internal val value: UInt) {
@@ -844,9 +809,7 @@ fun Component.catchEvent(handler: (FtxUIEvent) -> Boolean): Component {
         }
         block(e)
     }
-    return wrapOwning(ftxui_component_catch_event(handle, callback, stableRef.asCPointer())!!).also {
-        it.cleanups.add { stableRef.dispose() }
-    }
+    return Component(ftxui_component_catch_event(handle, callback, stableRef.asCPointer(), stableRefDestructor)!!)
 }
 
 // Wraps `inner` with a Renderer that bidirectionally syncs a Kotlin property with a
@@ -881,17 +844,18 @@ private fun <T> syncWrapper(
     }
 }
 
-// Allocates a native Int buffer, builds an inner component with it, wraps the result in
-// a sync renderer, and registers cleanup of the buffer with the returned component.
+// Allocates an Int state, builds an inner component with its pointer, and wraps the result
+// in a sync renderer. The render closure captures `state`, so the state (and its native
+// buffer) stays alive as long as the component does and is freed by the state's Cleaner
+// once the component — and thus the closure — is released.
 private fun intStateSynced(
     initial: Int,
     prop: KMutableProperty0<Int>,
     createInner: (CPointer<IntVar>) -> Component,
 ): Component {
-    val native = nativeHeap.alloc<IntVar>().also { it.value = initial }
-    val inner = createInner(native.ptr)
-    return syncWrapper(inner, prop, { native.value }, { native.value = it })
-        .also { it.cleanups.add { nativeHeap.free(native) } }
+    val state = IntState(initial)
+    val inner = createInner(state.ptr)
+    return syncWrapper(inner, prop, { state.value }, { state.value = it })
 }
 
 // Same as intStateSynced but for Boolean state.
@@ -900,10 +864,9 @@ private fun boolStateSynced(
     prop: KMutableProperty0<Boolean>,
     createInner: (CPointer<BooleanVar>) -> Component,
 ): Component {
-    val native = nativeHeap.alloc<BooleanVar>().also { it.value = initial }
-    val inner = createInner(native.ptr)
-    return syncWrapper(inner, prop, { native.value }, { native.value = it })
-        .also { it.cleanups.add { nativeHeap.free(native) } }
+    val state = BoolState(initial)
+    val inner = createInner(state.ptr)
+    return syncWrapper(inner, prop, { state.value }, { state.value = it })
 }
 
 // Same as intStateSynced but for Float state.
@@ -912,10 +875,9 @@ private fun floatStateSynced(
     prop: KMutableProperty0<Float>,
     createInner: (CPointer<FloatVar>) -> Component,
 ): Component {
-    val native = nativeHeap.alloc<FloatVar>().also { it.value = initial }
-    val inner = createInner(native.ptr)
-    return syncWrapper(inner, prop, { native.value }, { native.value = it })
-        .also { it.cleanups.add { nativeHeap.free(native) } }
+    val state = FloatState(initial)
+    val inner = createInner(state.ptr)
+    return syncWrapper(inner, prop, { state.value }, { state.value = it })
 }
 
 // Same as intStateSynced but for String state via StringState (ftxui_string_handle).
@@ -927,108 +889,106 @@ private fun stringStateSynced(
     val state = StringState(initial)
     val inner = createInner(state)
     return syncWrapper(inner, prop, { state.value }, { state.value = it })
-        .also { it.cleanups.add { state.destroy() } }
 }
 
 // -- Component decorators
-// These wrap the component in a Renderer and transfer ownership: the source component's
-// handle will be destroyed when the returned component is destroyed.
+// These wrap the component in a new decorated component. The C++ side holds a reference to
+// the source, so it stays alive; the source's Kotlin wrapper can be safely discarded.
 // Note: wrapping discards focus/event forwarding — use on non-interactive components only.
 
-fun Component.border() = wrapOwning(ftxui_component_border(handle)!!)
-fun Component.borderLight() = wrapOwning(ftxui_component_border_light(handle)!!)
-fun Component.borderDashed() = wrapOwning(ftxui_component_border_dashed(handle)!!)
-fun Component.borderHeavy() = wrapOwning(ftxui_component_border_heavy(handle)!!)
-fun Component.borderDouble() = wrapOwning(ftxui_component_border_double(handle)!!)
-fun Component.borderRounded() = wrapOwning(ftxui_component_border_rounded(handle)!!)
-fun Component.borderEmpty() = wrapOwning(ftxui_component_border_empty(handle)!!)
+fun Component.border() = Component(ftxui_component_border(handle)!!)
+fun Component.borderLight() = Component(ftxui_component_border_light(handle)!!)
+fun Component.borderDashed() = Component(ftxui_component_border_dashed(handle)!!)
+fun Component.borderHeavy() = Component(ftxui_component_border_heavy(handle)!!)
+fun Component.borderDouble() = Component(ftxui_component_border_double(handle)!!)
+fun Component.borderRounded() = Component(ftxui_component_border_rounded(handle)!!)
+fun Component.borderEmpty() = Component(ftxui_component_border_empty(handle)!!)
 
-fun Component.flex() = wrapOwning(ftxui_component_flex(handle)!!)
-fun Component.frame() = wrapOwning(ftxui_component_frame(handle)!!)
-fun Component.vscrollIndicator() = wrapOwning(ftxui_component_vscroll_indicator(handle)!!)
+fun Component.flex() = Component(ftxui_component_flex(handle)!!)
+fun Component.frame() = Component(ftxui_component_frame(handle)!!)
+fun Component.vscrollIndicator() = Component(ftxui_component_vscroll_indicator(handle)!!)
 fun Component.size(widthOrHeight: WidthOrHeight, constraint: Constraint, value: Int) =
-    wrapOwning(ftxui_component_set_size(handle, widthOrHeight.value, constraint.value, value)!!)
+    Component(ftxui_component_set_size(handle, widthOrHeight.value, constraint.value, value)!!)
 
-fun Component.bold() = wrapOwning(ftxui_component_bold(handle)!!)
-fun Component.inverted() = wrapOwning(ftxui_component_inverted(handle)!!)
-fun Component.underlined() = wrapOwning(ftxui_component_underlined(handle)!!)
-fun Component.dim() = wrapOwning(ftxui_component_dim(handle)!!)
-fun Component.blink() = wrapOwning(ftxui_component_blink(handle)!!)
-fun Component.strikethrough() = wrapOwning(ftxui_component_strikethrough(handle)!!)
+fun Component.bold() = Component(ftxui_component_bold(handle)!!)
+fun Component.inverted() = Component(ftxui_component_inverted(handle)!!)
+fun Component.underlined() = Component(ftxui_component_underlined(handle)!!)
+fun Component.dim() = Component(ftxui_component_dim(handle)!!)
+fun Component.blink() = Component(ftxui_component_blink(handle)!!)
+fun Component.strikethrough() = Component(ftxui_component_strikethrough(handle)!!)
 
-fun Component.color(color: Color) = wrapOwning(ftxui_component_color(handle, color.handle)!!)
-fun Component.bgcolor(color: Color) = wrapOwning(ftxui_component_bgcolor(handle, color.handle)!!)
+fun Component.color(color: Color) = Component(ftxui_component_color(handle, color.handle)!!)
+fun Component.bgcolor(color: Color) = Component(ftxui_component_bgcolor(handle, color.handle)!!)
 
-fun Component.hcenter() = wrapOwning(ftxui_component_hcenter(handle)!!)
-fun Component.vcenter() = wrapOwning(ftxui_component_vcenter(handle)!!)
-fun Component.center() = wrapOwning(ftxui_component_center(handle)!!)
-fun Component.alignRight() = wrapOwning(ftxui_component_align_right(handle)!!)
+fun Component.hcenter() = Component(ftxui_component_hcenter(handle)!!)
+fun Component.vcenter() = Component(ftxui_component_vcenter(handle)!!)
+fun Component.center() = Component(ftxui_component_center(handle)!!)
+fun Component.alignRight() = Component(ftxui_component_align_right(handle)!!)
 
-fun Component.nothing() = wrapOwning(ftxui_component_nothing(handle)!!)
-fun Component.hoverable(hover: BoolState) = wrapOwning(ftxui_component_hoverable(handle, hover.ptr)!!)
+fun Component.nothing() = Component(ftxui_component_nothing(handle)!!)
+fun Component.hoverable(hover: BoolState) = Component(ftxui_component_hoverable(handle, hover.ptr)!!)
 fun Component.hoverable(hover: KMutableProperty0<Boolean>): Component =
     boolStateSynced(hover.get(), hover) { ptr ->
-        wrapOwning(ftxui_component_hoverable(handle, ptr)!!)
+        Component(ftxui_component_hoverable(handle, ptr)!!)
     }
 
 fun Component.hoverable(onEnter: () -> Unit, onLeave: () -> Unit): Component {
     val enterRef = StableRef.create(onEnter)
     val leaveRef = StableRef.create(onLeave)
-    return wrapOwning(ftxui_component_hoverable_callbacks(handle, callbackBridge, enterRef.asCPointer(), callbackBridge, leaveRef.asCPointer())!!).also {
-        it.cleanups.add { enterRef.dispose() }
-        it.cleanups.add { leaveRef.dispose() }
-    }
+    return Component(ftxui_component_hoverable_callbacks(
+        handle,
+        callbackBridge, enterRef.asCPointer(), stableRefDestructor,
+        callbackBridge, leaveRef.asCPointer(), stableRefDestructor,
+    )!!)
 }
 
 fun Component.hoverable(onChange: (Boolean) -> Unit): Component {
     val ref = StableRef.create(onChange)
-    return wrapOwning(ftxui_component_hoverable_change(handle, hoverChangeBridge, ref.asCPointer())!!).also {
-        it.cleanups.add { ref.dispose() }
-    }
+    return Component(ftxui_component_hoverable_change(handle, hoverChangeBridge, ref.asCPointer(), stableRefDestructor)!!)
 }
 
 // -- State holders
-// Native-heap-backed mutable values for interactive components.
-// Call free() when the associated component is destroyed.
+// Native-heap-backed mutable values for interactive components. The backing buffer is
+// freed when this Kotlin object is garbage collected.
+//
+// IMPORTANT: the state's pointer is handed to a component, which keeps it for its lifetime.
+// Keep a reference to the State for at least as long as the component that uses it is alive,
+// otherwise the buffer may be freed while the component still reads it (use-after-free).
 
-class BoolState(initial: Boolean = false) : AutoCloseable {
+class BoolState(initial: Boolean = false) {
     private val native = nativeHeap.alloc<BooleanVar>().also { it.value = initial }
+    private val cleaner = createCleaner(native) { nativeHeap.free(it) }
     var value: Boolean
         get() = native.value
         set(v) { native.value = v }
     internal val ptr get() = native.ptr
-    fun destroy() = nativeHeap.free(native)
-    override fun close() = destroy()
 }
 
-class IntState(initial: Int = 0) : AutoCloseable {
+class IntState(initial: Int = 0) {
     private val native = nativeHeap.alloc<IntVar>().also { it.value = initial }
+    private val cleaner = createCleaner(native) { nativeHeap.free(it) }
     var value: Int
         get() = native.value
         set(v) { native.value = v }
     internal val ptr get() = native.ptr
-    fun destroy() = nativeHeap.free(native)
-    override fun close() = destroy()
 }
 
-class StringState(initial: String = "") : AutoCloseable {
+class StringState(initial: String = "") {
     private val handle = ftxui_string_create(initial)!!
+    private val cleaner = createCleaner(handle) { ftxui_string_destroy(it) }
     var value: String
         get() = ftxui_string_get(handle)?.toKString() ?: ""
         set(v) { ftxui_string_set(handle, v) }
     internal val ptr get() = handle
-    fun destroy() = ftxui_string_destroy(handle)
-    override fun close() = destroy()
 }
 
-class FloatState(initial: Float = 0f) : AutoCloseable {
+class FloatState(initial: Float = 0f) {
     private val native = nativeHeap.alloc<FloatVar>().also { it.value = initial }
+    private val cleaner = createCleaner(native) { nativeHeap.free(it) }
     var value: Float
         get() = native.value
         set(v) { native.value = v }
     internal val ptr get() = native.ptr
-    fun destroy() = nativeHeap.free(native)
-    override fun close() = destroy()
 }
 
 // -- Additional components
@@ -1060,13 +1020,12 @@ fun input(options: InputOptions): Component = memScoped {
         this.cursor_position = options.cursorPosition?.ptr
         this.on_change = if (changeRef != null) callbackBridge else null
         this.on_change_userdata = changeRef?.asCPointer()
+        this.on_change_destructor = if (changeRef != null) stableRefDestructor else null
         this.on_enter = if (enterRef != null) callbackBridge else null
         this.on_enter_userdata = enterRef?.asCPointer()
+        this.on_enter_destructor = if (enterRef != null) stableRefDestructor else null
     }
-    Component(ftxui_component_input_with_options(opts)!!).also { c ->
-        changeRef?.let { c.cleanups.add { it.dispose() } }
-        enterRef?.let { c.cleanups.add { it.dispose() } }
-    }
+    Component(ftxui_component_input_with_options(opts)!!)
 }
 
 fun checkbox(label: String, checked: BoolState): Component =
@@ -1074,9 +1033,7 @@ fun checkbox(label: String, checked: BoolState): Component =
 
 fun checkbox(label: String, checked: BoolState, onChange: () -> Unit): Component {
     val ref = StableRef.create(onChange)
-    return Component(ftxui_component_checkbox_with_change(label, checked.ptr, callbackBridge, ref.asCPointer())!!).also {
-        it.cleanups.add { ref.dispose() }
-    }
+    return Component(ftxui_component_checkbox_with_change(label, checked.ptr, callbackBridge, ref.asCPointer(), stableRefDestructor)!!)
 }
 
 fun toggle(entries: List<String>, selected: IntState): Component = memScoped {
@@ -1093,9 +1050,7 @@ fun slider(value: IntState, min: Int, max: Int, increment: Int = 1, direction: D
 
 fun slider(value: IntState, min: Int, max: Int, increment: Int = 1, onChange: () -> Unit): Component {
     val ref = StableRef.create(onChange)
-    return Component(ftxui_component_slider_int_with_change(value.ptr, min, max, increment, callbackBridge, ref.asCPointer())!!).also {
-        it.cleanups.add { ref.dispose() }
-    }
+    return Component(ftxui_component_slider_int_with_change(value.ptr, min, max, increment, callbackBridge, ref.asCPointer(), stableRefDestructor)!!)
 }
 
 fun slider(label: String, value: FloatState, min: Float, max: Float, increment: Float = 1f): Component =
@@ -1103,9 +1058,7 @@ fun slider(label: String, value: FloatState, min: Float, max: Float, increment: 
 
 fun slider(value: FloatState, min: Float, max: Float, increment: Float = 1f, onChange: () -> Unit): Component {
     val ref = StableRef.create(onChange)
-    return Component(ftxui_component_slider_float_with_change(value.ptr, min, max, increment, callbackBridge, ref.asCPointer())!!).also {
-        it.cleanups.add { ref.dispose() }
-    }
+    return Component(ftxui_component_slider_float_with_change(value.ptr, min, max, increment, callbackBridge, ref.asCPointer(), stableRefDestructor)!!)
 }
 
 fun slider(value: FloatState, min: Float, max: Float, increment: Float = 1f, direction: Direction,
@@ -1123,9 +1076,7 @@ fun radiobox(entries: List<String>, selected: IntState, onChange: () -> Unit): C
     return memScoped {
         val ptrs = allocArray<CPointerVar<ByteVar>>(entries.size)
         entries.forEachIndexed { i, s -> ptrs[i] = s.cstr.getPointer(this) }
-        Component(ftxui_component_radiobox_with_change(ptrs, entries.size, selected.ptr, callbackBridge, ref.asCPointer())!!).also {
-            it.cleanups.add { ref.dispose() }
-        }
+        Component(ftxui_component_radiobox_with_change(ptrs, entries.size, selected.ptr, callbackBridge, ref.asCPointer(), stableRefDestructor)!!)
     }
 }
 
@@ -1148,12 +1099,9 @@ fun menu(
         entries.forEachIndexed { i, s -> ptrs[i] = s.cstr.getPointer(this) }
         Component(ftxui_component_menu_with_callbacks(
             ptrs, entries.size, selected.ptr,
-            if (changeRef != null) callbackBridge else null, changeRef?.asCPointer(),
-            if (enterRef != null) callbackBridge else null, enterRef?.asCPointer(),
-        )!!).also { c ->
-            changeRef?.let { c.cleanups.add { it.dispose() } }
-            enterRef?.let { c.cleanups.add { it.dispose() } }
-        }
+            if (changeRef != null) callbackBridge else null, changeRef?.asCPointer(), stableRefDestructor,
+            if (enterRef != null) callbackBridge else null, enterRef?.asCPointer(), stableRefDestructor,
+        )!!)
     }
 }
 
@@ -1228,12 +1176,11 @@ fun resizableSplit(
         if (ref != null) {
             this.separator_func = separatorFuncBridge
             this.separator_userdata = ref.asCPointer()
+            this.separator_destructor = stableRefDestructor
         }
     }
     val handle = ftxui_component_resizable_split_opt(option)!!
-    return wrapOwning(main, back, handle).also {
-        ref?.let { r -> it.cleanups.add { r.dispose() } }
-    }
+    return Component(handle)
 }
 
 fun gridbox(rows: List<List<Element>>): Element = memScoped {
@@ -1288,15 +1235,12 @@ fun dropdownCustom(
         entries.forEachIndexed { i, s -> ptrs[i] = s.cstr.getPointer(this) }
         ftxui_component_dropdown_custom(
             ptrs, entries.size, selected?.ptr,
-            transformCb, transformRef?.asCPointer(),
-            entryTransformCb, entryTransformRef?.asCPointer(),
+            transformCb, transformRef?.asCPointer(), stableRefDestructor,
+            entryTransformCb, entryTransformRef?.asCPointer(), stableRefDestructor,
         )!!
     }
 
-    return Component(handle).also { c ->
-        transformRef?.let { c.cleanups.add { it.dispose() } }
-        entryTransformRef?.let { c.cleanups.add { it.dispose() } }
-    }
+    return Component(handle)
 }
 
 fun tab(selected: IntState): ContainerComponent =
@@ -1306,32 +1250,30 @@ fun stacked(): ContainerComponent =
     ContainerComponent(ftxui_component_container_stacked()!!)
 
 fun resizableSplitLeft(main: Component, back: Component, mainSize: IntState): Component =
-    wrapOwning(main, back, ftxui_component_resizable_split_left(main.handle, back.handle, mainSize.ptr)!!)
+    Component(ftxui_component_resizable_split_left(main.handle, back.handle, mainSize.ptr)!!)
 
 fun resizableSplitRight(main: Component, back: Component, mainSize: IntState): Component =
-    wrapOwning(main, back, ftxui_component_resizable_split_right(main.handle, back.handle, mainSize.ptr)!!)
+    Component(ftxui_component_resizable_split_right(main.handle, back.handle, mainSize.ptr)!!)
 
 fun resizableSplitTop(main: Component, back: Component, mainSize: IntState): Component =
-    wrapOwning(main, back, ftxui_component_resizable_split_top(main.handle, back.handle, mainSize.ptr)!!)
+    Component(ftxui_component_resizable_split_top(main.handle, back.handle, mainSize.ptr)!!)
 
 fun resizableSplitBottom(main: Component, back: Component, mainSize: IntState): Component =
-    wrapOwning(main, back, ftxui_component_resizable_split_bottom(main.handle, back.handle, mainSize.ptr)!!)
+    Component(ftxui_component_resizable_split_bottom(main.handle, back.handle, mainSize.ptr)!!)
 
 fun collapsible(label: String, child: Component, show: BoolState): Component =
-    child.wrapOwning(ftxui_component_collapsible(label, child.handle, show.ptr)!!)
+    Component(ftxui_component_collapsible(label, child.handle, show.ptr)!!)
 
 fun maybe(child: Component, show: BoolState): Component =
-    child.wrapOwning(ftxui_component_maybe(child.handle, show.ptr)!!)
+    Component(ftxui_component_maybe(child.handle, show.ptr)!!)
 
 fun maybe(child: Component, predicate: () -> Boolean): Component {
     val ref = StableRef.create(predicate)
-    return child.wrapOwning(ftxui_component_maybe_fn(child.handle, predicateBridge, ref.asCPointer())!!).also {
-        it.cleanups.add { ref.dispose() }
-    }
+    return Component(ftxui_component_maybe_fn(child.handle, predicateBridge, ref.asCPointer(), stableRefDestructor)!!)
 }
 
 fun modal(main: Component, modal: Component, showModal: BoolState): Component =
-    wrapOwning(main, modal, ftxui_component_modal(main.handle, modal.handle, showModal.ptr)!!)
+    Component(ftxui_component_modal(main.handle, modal.handle, showModal.ptr)!!)
 
 // -- Property-ref overloads
 // These accept a KMutableProperty0<T> (e.g. ::myVar) instead of an IntState/BoolState.
@@ -1356,9 +1298,7 @@ fun checkbox(label: String, checked: KMutableProperty0<Boolean>): Component =
 fun checkbox(label: String, checked: KMutableProperty0<Boolean>, onChange: () -> Unit): Component =
     boolStateSynced(checked.get(), checked) { ptr ->
         val ref = StableRef.create(onChange)
-        Component(ftxui_component_checkbox_with_change(label, ptr, callbackBridge, ref.asCPointer())!!).also {
-            it.cleanups.add { ref.dispose() }
-        }
+        Component(ftxui_component_checkbox_with_change(label, ptr, callbackBridge, ref.asCPointer(), stableRefDestructor)!!)
     }
 
 fun toggle(entries: List<String>, selected: KMutableProperty0<Int>): Component =
@@ -1383,9 +1323,7 @@ fun slider(value: KMutableProperty0<Int>, min: Int, max: Int, increment: Int = 1
 fun slider(value: KMutableProperty0<Int>, min: Int, max: Int, increment: Int = 1, onChange: () -> Unit): Component =
     intStateSynced(value.get(), value) { ptr ->
         val ref = StableRef.create(onChange)
-        Component(ftxui_component_slider_int_with_change(ptr, min, max, increment, callbackBridge, ref.asCPointer())!!).also {
-            it.cleanups.add { ref.dispose() }
-        }
+        Component(ftxui_component_slider_int_with_change(ptr, min, max, increment, callbackBridge, ref.asCPointer(), stableRefDestructor)!!)
     }
 
 fun slider(label: String, value: KMutableProperty0<Float>, min: Float, max: Float, increment: Float = 1f): Component =
@@ -1396,9 +1334,7 @@ fun slider(label: String, value: KMutableProperty0<Float>, min: Float, max: Floa
 fun slider(value: KMutableProperty0<Float>, min: Float, max: Float, increment: Float = 1f, onChange: () -> Unit): Component =
     floatStateSynced(value.get(), value) { ptr ->
         val ref = StableRef.create(onChange)
-        Component(ftxui_component_slider_float_with_change(ptr, min, max, increment, callbackBridge, ref.asCPointer())!!).also {
-            it.cleanups.add { ref.dispose() }
-        }
+        Component(ftxui_component_slider_float_with_change(ptr, min, max, increment, callbackBridge, ref.asCPointer(), stableRefDestructor)!!)
     }
 
 fun slider(value: KMutableProperty0<Float>, min: Float, max: Float, increment: Float = 1f, direction: Direction,
@@ -1422,9 +1358,7 @@ fun radiobox(entries: List<String>, selected: KMutableProperty0<Int>, onChange: 
         memScoped {
             val ptrs = allocArray<CPointerVar<ByteVar>>(entries.size)
             entries.forEachIndexed { i, s -> ptrs[i] = s.cstr.getPointer(this) }
-            Component(ftxui_component_radiobox_with_change(ptrs, entries.size, ptr, callbackBridge, ref.asCPointer())!!).also {
-                it.cleanups.add { ref.dispose() }
-            }
+            Component(ftxui_component_radiobox_with_change(ptrs, entries.size, ptr, callbackBridge, ref.asCPointer(), stableRefDestructor)!!)
         }
     }
 
@@ -1451,12 +1385,9 @@ fun menu(
             entries.forEachIndexed { i, s -> ptrs[i] = s.cstr.getPointer(this) }
             Component(ftxui_component_menu_with_callbacks(
                 ptrs, entries.size, ptr,
-                if (changeRef != null) callbackBridge else null, changeRef?.asCPointer(),
-                if (enterRef != null) callbackBridge else null, enterRef?.asCPointer(),
-            )!!).also { c ->
-                changeRef?.let { c.cleanups.add { it.dispose() } }
-                enterRef?.let { c.cleanups.add { it.dispose() } }
-            }
+                if (changeRef != null) callbackBridge else null, changeRef?.asCPointer(), stableRefDestructor,
+                if (enterRef != null) callbackBridge else null, enterRef?.asCPointer(), stableRefDestructor,
+            )!!)
         }
     }
 
@@ -1480,17 +1411,17 @@ fun dropdown(entries: List<String>, selected: KMutableProperty0<Int>): Component
 
 fun collapsible(label: String, child: Component, show: KMutableProperty0<Boolean>): Component =
     boolStateSynced(show.get(), show) { ptr ->
-        child.wrapOwning(ftxui_component_collapsible(label, child.handle, ptr)!!)
+        Component(ftxui_component_collapsible(label, child.handle, ptr)!!)
     }
 
 fun maybe(child: Component, show: KMutableProperty0<Boolean>): Component =
     boolStateSynced(show.get(), show) { ptr ->
-        child.wrapOwning(ftxui_component_maybe(child.handle, ptr)!!)
+        Component(ftxui_component_maybe(child.handle, ptr)!!)
     }
 
 fun modal(main: Component, modal: Component, showModal: KMutableProperty0<Boolean>): Component =
     boolStateSynced(showModal.get(), showModal) { ptr ->
-        wrapOwning(main, modal, ftxui_component_modal(main.handle, modal.handle, ptr)!!)
+        Component(ftxui_component_modal(main.handle, modal.handle, ptr)!!)
     }
 
 fun Component.maybe(show: BoolState) = maybe(this, show)
@@ -1501,22 +1432,22 @@ fun Component.modal(modal: Component, showModal: KMutableProperty0<Boolean>) = m
 
 fun resizableSplitLeft(main: Component, back: Component, mainSize: KMutableProperty0<Int>): Component =
     intStateSynced(mainSize.get(), mainSize) { ptr ->
-        wrapOwning(main, back, ftxui_component_resizable_split_left(main.handle, back.handle, ptr)!!)
+        Component(ftxui_component_resizable_split_left(main.handle, back.handle, ptr)!!)
     }
 
 fun resizableSplitRight(main: Component, back: Component, mainSize: KMutableProperty0<Int>): Component =
     intStateSynced(mainSize.get(), mainSize) { ptr ->
-        wrapOwning(main, back, ftxui_component_resizable_split_right(main.handle, back.handle, ptr)!!)
+        Component(ftxui_component_resizable_split_right(main.handle, back.handle, ptr)!!)
     }
 
 fun resizableSplitTop(main: Component, back: Component, mainSize: KMutableProperty0<Int>): Component =
     intStateSynced(mainSize.get(), mainSize) { ptr ->
-        wrapOwning(main, back, ftxui_component_resizable_split_top(main.handle, back.handle, ptr)!!)
+        Component(ftxui_component_resizable_split_top(main.handle, back.handle, ptr)!!)
     }
 
 fun resizableSplitBottom(main: Component, back: Component, mainSize: KMutableProperty0<Int>): Component =
     intStateSynced(mainSize.get(), mainSize) { ptr ->
-        wrapOwning(main, back, ftxui_component_resizable_split_bottom(main.handle, back.handle, ptr)!!)
+        Component(ftxui_component_resizable_split_bottom(main.handle, back.handle, ptr)!!)
     }
 
 fun poll(app: FtxUIApp, onPoll: () -> Unit): Component {
@@ -1525,9 +1456,7 @@ fun poll(app: FtxUIApp, onPoll: () -> Unit): Component {
         refPtr?.asStableRef<() -> Unit>()?.get()?.invoke()
         Unit
     }
-    return Component(ftxui_component_poll(app.handle, callback, stableRef.asCPointer())!!).also {
-        it.cleanups.add { stableRef.dispose() }
-    }
+    return Component(ftxui_component_poll(app.handle, callback, stableRef.asCPointer(), stableRefDestructor)!!)
 }
 
 fun FtxUIApp.requestAnimationFrame() = ftxui_app_request_animation_frame(handle)
@@ -1566,15 +1495,18 @@ fun menuToggle(entries: List<String>, selected: KMutableProperty0<Int>): Compone
 
 // -- Canvas
 
-class Canvas internal constructor(private val handle: ftxui_canvas_handle_t) : AutoCloseable {
-    private val cleanups = mutableListOf<() -> Unit>()
-
-    fun destroy() {
-        cleanups.forEach { it() }
-        cleanups.clear()
-        ftxui_canvas_destroy(handle)
+class Canvas internal constructor(private val handle: ftxui_canvas_handle_t) {
+    // Holds the handle plus the StableRefs created by style(); both are released together
+    // when the Canvas is garbage collected. Kept in a separate object so the Cleaner block
+    // does not capture the Canvas itself.
+    private class Resources(val handle: ftxui_canvas_handle_t) {
+        val refs = mutableListOf<StableRef<*>>()
     }
-    override fun close() = destroy()
+    private val resources = Resources(handle)
+    private val cleaner = createCleaner(resources) { res ->
+        res.refs.forEach { it.dispose() }
+        ftxui_canvas_destroy(res.handle)
+    }
 
     fun width(): Int = ftxui_canvas_width(handle)
     fun height(): Int = ftxui_canvas_height(handle)
@@ -1637,7 +1569,7 @@ class Canvas internal constructor(private val handle: ftxui_canvas_handle_t) : A
     // -- Cell styling
     fun style(x: Int, y: Int, style: (CellStyleView) -> Unit) {
         val ref = StableRef.create(style)
-        cleanups.add { ref.dispose() }
+        resources.refs.add(ref)
         ftxui_canvas_style(handle, x, y, cellStyleBridge, ref.asCPointer())
     }
 
@@ -1651,9 +1583,11 @@ class Canvas internal constructor(private val handle: ftxui_canvas_handle_t) : A
 // -- graph element
 // GraphFn wraps a graph callback and keeps the StableRef alive.
 // WARNING: GraphFn must be kept alive for as long as graph() elements using it are rendered.
-// Calling destroy() while the graph element is still being rendered causes a use-after-free.
-class GraphFn(fn: (width: Int, height: Int, output: IntArray) -> Unit) : AutoCloseable {
+// The StableRef is disposed when this object is garbage collected; letting it be collected
+// while the graph element is still being rendered causes a use-after-free.
+class GraphFn(fn: (width: Int, height: Int, output: IntArray) -> Unit) {
     private val stableRef = StableRef.create(fn)
+    private val cleaner = createCleaner(stableRef) { it.dispose() }
     internal val cCallback: ftxui_graph_callback_t = staticCFunction { w: Int, h: Int, out: CPointer<IntVar>?, refPtr: COpaquePointer? ->
         val block = refPtr!!.asStableRef<(Int, Int, IntArray) -> Unit>().get()
         val arr = IntArray(w)
@@ -1661,17 +1595,14 @@ class GraphFn(fn: (width: Int, height: Int, output: IntArray) -> Unit) : AutoClo
         for (i in 0 until w) out!![i] = arr[i]
     }
     internal val userData get() = stableRef.asCPointer()
-    fun destroy() = stableRef.dispose()
-    override fun close() = destroy()
 }
 
 fun graph(fn: GraphFn): Element = Element(ftxui_element_graph(fn.cCallback, fn.userData)!!)
 
 // -- LinearGradient
 
-class LinearGradient internal constructor(internal val handle: ftxui_linear_gradient_handle_t) : AutoCloseable {
-    fun destroy() = ftxui_linear_gradient_destroy(handle)
-    override fun close() = destroy()
+class LinearGradient internal constructor(internal val handle: ftxui_linear_gradient_handle_t) {
+    private val cleaner = createCleaner(handle) { ftxui_linear_gradient_destroy(it) }
 
     fun angle(degrees: Float): LinearGradient { ftxui_linear_gradient_angle(handle, degrees); return this }
     fun stop(color: Color): LinearGradient { ftxui_linear_gradient_stop(handle, color.handle); return this }
@@ -1765,9 +1696,8 @@ private val decoratorBridge = staticCFunction<ftxui_element_handle_t?, COpaquePo
     refPtr!!.asStableRef<(Element) -> Element>().get()(Element(elementHandle!!)).handle
 }
 
-class Table internal constructor(private val handle: ftxui_table_handle_t) : AutoCloseable {
-    fun destroy() = ftxui_table_destroy(handle)
-    override fun close() = destroy()
+class Table internal constructor(private val handle: ftxui_table_handle_t) {
+    private val cleaner = createCleaner(handle) { ftxui_table_destroy(it) }
     fun render(): Element = Element(ftxui_table_render(handle)!!)
 
     fun selectAll() = TableSelection(ftxui_table_select_all(handle)!!)
@@ -1793,19 +1723,21 @@ class Table internal constructor(private val handle: ftxui_table_handle_t) : Aut
     }
 }
 
-// TableSelection.destroy() must be called to release the StableRefs for any decorator lambdas.
-class TableSelection internal constructor(private val handle: ftxui_table_selection_handle_t) : AutoCloseable {
-    private val refs = mutableListOf<StableRef<*>>()
-
-    fun destroy() {
-        refs.forEach { it.dispose() }
-        refs.clear()
-        ftxui_table_selection_destroy(handle)
+// The handle and the StableRefs for any decorator lambdas are released together when this
+// object is garbage collected.
+class TableSelection internal constructor(private val handle: ftxui_table_selection_handle_t) {
+    // Kept in a separate object so the Cleaner block does not capture the TableSelection.
+    private class Resources(val handle: ftxui_table_selection_handle_t) {
+        val refs = mutableListOf<StableRef<*>>()
     }
-    override fun close() = destroy()
+    private val resources = Resources(handle)
+    private val cleaner = createCleaner(resources) { res ->
+        res.refs.forEach { it.dispose() }
+        ftxui_table_selection_destroy(res.handle)
+    }
 
     private fun track(transform: (Element) -> Element): COpaquePointer =
-        StableRef.create(transform).also { refs.add(it) }.asCPointer()
+        StableRef.create(transform).also { resources.refs.add(it) }.asCPointer()
 
     // -- Border
     fun border(style: BorderStyle = BorderStyle.Light) = apply { ftxui_table_selection_border(handle, style.value) }
@@ -1908,13 +1840,12 @@ fun windowComponent(options: WindowOptions): Component = memScoped {
 class FtxUILoop internal constructor(
     private val loopHandle: ftxui_loop_handle_t,
     val app: FtxUIApp,
-) : AutoCloseable {
+) {
+    private val cleaner = createCleaner(loopHandle) { ftxui_loop_destroy(it) }
     fun hasQuitted(): Boolean = ftxui_loop_has_quitted(loopHandle)
     fun runOnce() = ftxui_loop_run_once(loopHandle)
     fun runOnceBlocking() = ftxui_loop_run_once_blocking(loopHandle)
     fun run() { while (!hasQuitted()) runOnceBlocking() }
-    fun destroy() = ftxui_loop_destroy(loopHandle)
-    override fun close() = destroy()
 
     companion object {
         operator fun invoke(app: FtxUIApp, component: Component): FtxUILoop =

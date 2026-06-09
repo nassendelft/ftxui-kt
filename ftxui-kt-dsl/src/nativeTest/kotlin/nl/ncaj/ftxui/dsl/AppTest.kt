@@ -11,12 +11,8 @@ import kotlin.test.assertTrue
 private fun testApp(block: AppScope.() -> Component) {
     val app = FtxUIApp.terminalOutput()
     val scope = AppScope(app)
-    try {
-        scope.block().close()
-    } finally {
-        app.close()
-        scope.closeAll()
-    }
+    scope.block()
+    // app, scope and the created component are freed by their Cleaners after GC.
 }
 
 // State vars are class members because Kotlin/Native does not support KMutableProperty0

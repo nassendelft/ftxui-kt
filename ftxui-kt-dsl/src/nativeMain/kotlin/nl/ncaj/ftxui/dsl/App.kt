@@ -3,10 +3,12 @@ package nl.ncaj.ftxui.dsl
 import nl.ncaj.ftxui.*
 
 class AppScope internal constructor(internal val app: FtxUIApp) {
-    private val resources = mutableListOf<AutoCloseable>()
+    // Holds references to native-resource wrappers (states, tables, canvases, gradients, …)
+    // so they stay reachable — and are therefore not freed by their Cleaners — for as long
+    // as the app loop is running. They become collectable once runApp() returns.
+    private val resources = mutableListOf<Any>()
 
-    internal fun <T : AutoCloseable> track(r: T): T = r.also { resources.add(it) }
-    internal fun closeAll() = resources.reversed().forEach { it.close() }
+    internal fun <T : Any> track(r: T): T = r.also { resources.add(it) }
 
     fun exit() = app.exit()
     fun post(block: () -> Unit) = app.post(block)
@@ -40,11 +42,8 @@ fun fixedSizeApp(dimx: Int, dimy: Int, block: AppScope.() -> Component) =
 private fun runApp(ftxuiApp: FtxUIApp, block: AppScope.() -> Component) {
     val scope = AppScope(ftxuiApp)
     val root = scope.block()
-    try {
-        ftxuiApp.loop(root)
-    } finally {
-        root.close()
-        ftxuiApp.close()
-        scope.closeAll()
-    }
+    // scope, root and ftxuiApp remain reachable as stack roots for the duration of the
+    // blocking loop. Once this function returns they become collectable and their native
+    // handles/buffers are released by their Cleaners.
+    ftxuiApp.loop(root)
 }
