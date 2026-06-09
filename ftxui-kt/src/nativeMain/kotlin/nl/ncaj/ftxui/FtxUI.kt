@@ -538,6 +538,23 @@ fun focusableRenderer(callback: (focused: Boolean) -> Element): Component {
 
 fun Component.render() = Element(ftxui_component_render(this.handle)!!)
 
+val Component.focused: Boolean
+    get() = ftxui_component_focused(handle)
+
+val Component.active: Boolean
+    get() = ftxui_component_active(handle)
+
+fun Component.takeFocus() {
+    ftxui_component_take_focus(handle)
+}
+
+var Component.activeChild: Component?
+    get() = ftxui_component_active_child(handle)?.let { Component(it) }
+    set(value) {
+        ftxui_component_set_active_child(handle, value?.handle)
+    }
+
+
 fun Component.decorateRender(transform: (Element) -> Element): Component {
     val stableRef = StableRef.create(transform)
     @Suppress("UNCHECKED_CAST")

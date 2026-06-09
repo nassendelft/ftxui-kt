@@ -50,6 +50,7 @@ publishing {
 }
 
 signing {
+    isRequired = !System.getenv("PGP_KEY").isNullOrEmpty()
     useInMemoryPgpKeys(System.getenv("PGP_KEY"), System.getenv("PGP_PASSWORD"))
     publishing.publications.withType<MavenPublication>().all { sign(this@all) }
 }
