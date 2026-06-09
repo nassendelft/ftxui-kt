@@ -103,7 +103,7 @@ data class EntryState(
 // freeing one wrapper merely drops a reference — components added to containers or wrapped
 // by decorators stay alive as long as the C++ tree references them.
 open class Component internal constructor(internal val handle: ComponentHandle) {
-    private val cleaner = createCleaner(handle) { ftxui_component_free(it) }
+    private val cleaner = createCleaner(handle) { ftxui_component_destroy(it) }
 }
 
 // add() copies the child into the container on the C++ side (its own shared_ptr reference),
@@ -304,11 +304,10 @@ fun Element.selectionStyleReset() = Element(ftxui_element_selection_style_reset(
 fun Element.selectionColor(color: Color) = Element(ftxui_element_selection_color(this.handle, color.handle)!!)
 fun Element.selectionBgColor(color: Color) = Element(ftxui_element_selection_background_color(this.handle, color.handle)!!)
 fun Element.selectionFgColor(color: Color) = Element(ftxui_element_selection_foreground_color(this.handle, color.handle)!!)
-// The StableRef is not tracked because Element lifetimes are managed by the C++ renderer.
-// The lambda stays alive for the lifetime of the rendered element tree on the C++ side.
+// The StableRef is managed and disposed of by the C++ renderer when the element is destroyed.
 fun Element.selectionStyle(style: (CellStyleView) -> Unit): Element {
     val ref = StableRef.create(style)
-    return Element(ftxui_element_selection_style(this.handle, cellStyleBridge, ref.asCPointer())!!)
+    return Element(ftxui_element_selection_style(this.handle, cellStyleBridge, ref.asCPointer(), stableRefDestructor)!!)
 }
 fun Element.focusPosition(x: Int, y: Int) = Element(ftxui_element_focus_position(this.handle, x, y)!!)
 fun Element.focusPositionRelative(x: Float, y: Float) = Element(ftxui_element_focus_position_relative(this.handle, x, y)!!)
@@ -1581,23 +1580,20 @@ class Canvas internal constructor(private val handle: ftxui_canvas_handle_t) {
 }
 
 // -- graph element
-// GraphFn wraps a graph callback and keeps the StableRef alive.
-// WARNING: GraphFn must be kept alive for as long as graph() elements using it are rendered.
-// The StableRef is disposed when this object is garbage collected; letting it be collected
-// while the graph element is still being rendered causes a use-after-free.
-class GraphFn(fn: (width: Int, height: Int, output: IntArray) -> Unit) {
-    private val stableRef = StableRef.create(fn)
-    private val cleaner = createCleaner(stableRef) { it.dispose() }
+class GraphFn(internal val fn: (width: Int, height: Int, output: IntArray) -> Unit) {
     internal val cCallback: ftxui_graph_callback_t = staticCFunction { w: Int, h: Int, out: CPointer<IntVar>?, refPtr: COpaquePointer? ->
         val block = refPtr!!.asStableRef<(Int, Int, IntArray) -> Unit>().get()
         val arr = IntArray(w)
         block(w, h, arr)
         for (i in 0 until w) out!![i] = arr[i]
     }
-    internal val userData get() = stableRef.asCPointer()
 }
 
-fun graph(fn: GraphFn): Element = Element(ftxui_element_graph(fn.cCallback, fn.userData)!!)
+// The StableRef is managed and disposed of by the C++ element when the graph node is destroyed.
+fun graph(fn: GraphFn): Element {
+    val ref = StableRef.create(fn.fn)
+    return Element(ftxui_element_graph(fn.cCallback, ref.asCPointer(), stableRefDestructor)!!)
+}
 
 // -- LinearGradient
 
@@ -1723,21 +1719,10 @@ class Table internal constructor(private val handle: ftxui_table_handle_t) {
     }
 }
 
-// The handle and the StableRefs for any decorator lambdas are released together when this
-// object is garbage collected.
+// The handle is released when this object is garbage collected.
+// The decorator StableRefs are synchronously disposed of by the C++ layer at the end of the decorate call.
 class TableSelection internal constructor(private val handle: ftxui_table_selection_handle_t) {
-    // Kept in a separate object so the Cleaner block does not capture the TableSelection.
-    private class Resources(val handle: ftxui_table_selection_handle_t) {
-        val refs = mutableListOf<StableRef<*>>()
-    }
-    private val resources = Resources(handle)
-    private val cleaner = createCleaner(resources) { res ->
-        res.refs.forEach { it.dispose() }
-        ftxui_table_selection_destroy(res.handle)
-    }
-
-    private fun track(transform: (Element) -> Element): COpaquePointer =
-        StableRef.create(transform).also { resources.refs.add(it) }.asCPointer()
+    private val cleaner = createCleaner(handle) { ftxui_table_selection_destroy(it) }
 
     // -- Border
     fun border(style: BorderStyle = BorderStyle.Light) = apply { ftxui_table_selection_border(handle, style.value) }
@@ -1754,46 +1739,60 @@ class TableSelection internal constructor(private val handle: ftxui_table_select
 
     // -- Generic decorator callbacks
     fun decorate(transform: (Element) -> Element) = apply {
-        ftxui_table_selection_decorate(handle, decoratorBridge, track(transform))
+        val ref = StableRef.create(transform)
+        ftxui_table_selection_decorate(handle, decoratorBridge, ref.asCPointer(), stableRefDestructor)
     }
     fun decorateAlternateRow(transform: (Element) -> Element, modulo: Int = 2, shift: Int = 0) = apply {
-        ftxui_table_selection_decorate_alternate_row(handle, decoratorBridge, track(transform), modulo, shift)
+        val ref = StableRef.create(transform)
+        ftxui_table_selection_decorate_alternate_row(handle, decoratorBridge, ref.asCPointer(), modulo, shift, stableRefDestructor)
     }
     fun decorateAlternateColumn(transform: (Element) -> Element, modulo: Int = 2, shift: Int = 0) = apply {
-        ftxui_table_selection_decorate_alternate_column(handle, decoratorBridge, track(transform), modulo, shift)
+        val ref = StableRef.create(transform)
+        ftxui_table_selection_decorate_alternate_column(handle, decoratorBridge, ref.asCPointer(), modulo, shift, stableRefDestructor)
     }
     fun decorateBorder(transform: (Element) -> Element) = apply {
-        ftxui_table_selection_decorate_border(handle, decoratorBridge, track(transform))
+        val ref = StableRef.create(transform)
+        ftxui_table_selection_decorate_border(handle, decoratorBridge, ref.asCPointer(), stableRefDestructor)
     }
     fun decorateBorderLeft(transform: (Element) -> Element) = apply {
-        ftxui_table_selection_decorate_border_left(handle, decoratorBridge, track(transform))
+        val ref = StableRef.create(transform)
+        ftxui_table_selection_decorate_border_left(handle, decoratorBridge, ref.asCPointer(), stableRefDestructor)
     }
     fun decorateBorderRight(transform: (Element) -> Element) = apply {
-        ftxui_table_selection_decorate_border_right(handle, decoratorBridge, track(transform))
+        val ref = StableRef.create(transform)
+        ftxui_table_selection_decorate_border_right(handle, decoratorBridge, ref.asCPointer(), stableRefDestructor)
     }
     fun decorateBorderTop(transform: (Element) -> Element) = apply {
-        ftxui_table_selection_decorate_border_top(handle, decoratorBridge, track(transform))
+        val ref = StableRef.create(transform)
+        ftxui_table_selection_decorate_border_top(handle, decoratorBridge, ref.asCPointer(), stableRefDestructor)
     }
     fun decorateBorderBottom(transform: (Element) -> Element) = apply {
-        ftxui_table_selection_decorate_border_bottom(handle, decoratorBridge, track(transform))
+        val ref = StableRef.create(transform)
+        ftxui_table_selection_decorate_border_bottom(handle, decoratorBridge, ref.asCPointer(), stableRefDestructor)
     }
     fun decorateSeparator(transform: (Element) -> Element) = apply {
-        ftxui_table_selection_decorate_separator(handle, decoratorBridge, track(transform))
+        val ref = StableRef.create(transform)
+        ftxui_table_selection_decorate_separator(handle, decoratorBridge, ref.asCPointer(), stableRefDestructor)
     }
     fun decorateSeparatorVertical(transform: (Element) -> Element) = apply {
-        ftxui_table_selection_decorate_separator_vertical(handle, decoratorBridge, track(transform))
+        val ref = StableRef.create(transform)
+        ftxui_table_selection_decorate_separator_vertical(handle, decoratorBridge, ref.asCPointer(), stableRefDestructor)
     }
     fun decorateSeparatorHorizontal(transform: (Element) -> Element) = apply {
-        ftxui_table_selection_decorate_separator_horizontal(handle, decoratorBridge, track(transform))
+        val ref = StableRef.create(transform)
+        ftxui_table_selection_decorate_separator_horizontal(handle, decoratorBridge, ref.asCPointer(), stableRefDestructor)
     }
     fun decorateCells(transform: (Element) -> Element) = apply {
-        ftxui_table_selection_decorate_cells(handle, decoratorBridge, track(transform))
+        val ref = StableRef.create(transform)
+        ftxui_table_selection_decorate_cells(handle, decoratorBridge, ref.asCPointer(), stableRefDestructor)
     }
     fun decorateCellsAlternateRow(transform: (Element) -> Element, modulo: Int = 2, shift: Int = 0) = apply {
-        ftxui_table_selection_decorate_cells_alternate_row(handle, decoratorBridge, track(transform), modulo, shift)
+        val ref = StableRef.create(transform)
+        ftxui_table_selection_decorate_cells_alternate_row(handle, decoratorBridge, ref.asCPointer(), modulo, shift, stableRefDestructor)
     }
     fun decorateCellsAlternateColumn(transform: (Element) -> Element, modulo: Int = 2, shift: Int = 0) = apply {
-        ftxui_table_selection_decorate_cells_alternate_column(handle, decoratorBridge, track(transform), modulo, shift)
+        val ref = StableRef.create(transform)
+        ftxui_table_selection_decorate_cells_alternate_column(handle, decoratorBridge, ref.asCPointer(), modulo, shift, stableRefDestructor)
     }
 
     // -- Convenience helpers (matching pre-existing pattern)

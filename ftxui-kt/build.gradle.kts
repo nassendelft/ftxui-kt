@@ -25,7 +25,7 @@ val nativeTargetName = (findProperty("native.target") as String?)
         else -> error("Unsupported host OS: $hostOs ($hostArch)")
     }
 
-val ftxuiCVersion = "v1.0.3"
+val ftxuiCVersion = "v1.0.4"
 
 val ftxuiCPlatform = when {
     hostOs.startsWith("Linux") -> "linux-x86_64"
