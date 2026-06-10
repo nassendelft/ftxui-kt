@@ -12,6 +12,3 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "ftxui-kt"
-
-include(":ftxui-kt")
-include(":ftxui-kt-dsl")

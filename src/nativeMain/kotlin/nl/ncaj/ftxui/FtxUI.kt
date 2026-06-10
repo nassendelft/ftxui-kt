@@ -1,5 +1,3 @@
-@file:OptIn(ExperimentalForeignApi::class, ExperimentalNativeApi::class)
-
 package nl.ncaj.ftxui
 
 import ftxui_c.*
@@ -12,7 +10,7 @@ internal typealias ComponentHandle = ftxui_component_handle_t
 internal typealias ElementHandle = ftxui_element_handle_t
 
 class Color internal constructor(internal val handle: ftxui_color_handle_t?) {
-    @OptIn(ExperimentalStdlibApi::class)
+    @Suppress("unused")
     private val cleaner = createCleaner(handle) { it?.let(::ftxui_color_destroy) }
 
     companion object {
@@ -103,6 +101,7 @@ data class EntryState(
 // freeing one wrapper merely drops a reference — components added to containers or wrapped
 // by decorators stay alive as long as the C++ tree references them.
 open class Component internal constructor(internal val handle: ComponentHandle) {
+    @Suppress("unused")
     private val cleaner = createCleaner(handle) { ftxui_component_destroy(it) }
 
     override fun equals(other: Any?): Boolean {
@@ -171,6 +170,7 @@ object Terminal {
 // teardown is non-deterministic; the app loop restores the terminal on exit and the app
 // object normally lives for the whole program, so this is fine in practice.
 class FtxUIApp internal constructor(internal val handle: ftxui_app_handle_t) {
+    @Suppress("unused")
     private val cleaner = createCleaner(handle) { ftxui_app_destroy(it) }
 
     fun loop(root: Component) = ftxui_app_loop(handle, root.handle)
@@ -506,6 +506,18 @@ fun button(
     // The colors are freed via their Cleaners once `options` becomes unreachable.
     return Component(handle!!)
 }
+
+fun button(
+    label: String,
+    options: ButtonOption,
+    onClick: () -> Unit
+): Component = button(label, onClick, options)
+
+fun button(
+    label: String,
+    onClick: () -> Unit
+): Component = button(label, onClick, ButtonOption.simple())
+
 
 // horizontal/vertical delegate to ContainerComponent.add(); each child manages its own handle.
 fun horizontal(vararg components: Component): ContainerComponent {
@@ -871,7 +883,7 @@ private fun <T> syncWrapper(
 // in a sync renderer. The render closure captures `state`, so the state (and its native
 // buffer) stays alive as long as the component does and is freed by the state's Cleaner
 // once the component — and thus the closure — is released.
-private fun intStateSynced(
+fun intStateSynced(
     initial: Int,
     prop: KMutableProperty0<Int>,
     createInner: (CPointer<IntVar>) -> Component,
@@ -882,7 +894,7 @@ private fun intStateSynced(
 }
 
 // Same as intStateSynced but for Boolean state.
-private fun boolStateSynced(
+fun boolStateSynced(
     initial: Boolean,
     prop: KMutableProperty0<Boolean>,
     createInner: (CPointer<BooleanVar>) -> Component,
@@ -893,7 +905,7 @@ private fun boolStateSynced(
 }
 
 // Same as intStateSynced but for Float state.
-private fun floatStateSynced(
+fun floatStateSynced(
     initial: Float,
     prop: KMutableProperty0<Float>,
     createInner: (CPointer<FloatVar>) -> Component,
@@ -904,7 +916,7 @@ private fun floatStateSynced(
 }
 
 // Same as intStateSynced but for String state via StringState (ftxui_string_handle).
-private fun stringStateSynced(
+fun stringStateSynced(
     initial: String,
     prop: KMutableProperty0<String>,
     createInner: (StringState) -> Component,
@@ -980,37 +992,52 @@ fun Component.hoverable(onChange: (Boolean) -> Unit): Component {
 
 class BoolState(initial: Boolean = false) {
     private val native = nativeHeap.alloc<BooleanVar>().also { it.value = initial }
+
+    @Suppress("unused")
     private val cleaner = createCleaner(native) { nativeHeap.free(it) }
+
     var value: Boolean
         get() = native.value
         set(v) { native.value = v }
+
     internal val ptr get() = native.ptr
 }
 
 class IntState(initial: Int = 0) {
     private val native = nativeHeap.alloc<IntVar>().also { it.value = initial }
+
+    @Suppress("unused")
     private val cleaner = createCleaner(native) { nativeHeap.free(it) }
+
     var value: Int
         get() = native.value
         set(v) { native.value = v }
+
     internal val ptr get() = native.ptr
 }
 
 class StringState(initial: String = "") {
     private val handle = ftxui_string_create(initial)!!
+    @Suppress("unused")
     private val cleaner = createCleaner(handle) { ftxui_string_destroy(it) }
+
     var value: String
         get() = ftxui_string_get(handle)?.toKString() ?: ""
         set(v) { ftxui_string_set(handle, v) }
+
     internal val ptr get() = handle
 }
 
 class FloatState(initial: Float = 0f) {
     private val native = nativeHeap.alloc<FloatVar>().also { it.value = initial }
+
+    @Suppress("unused")
     private val cleaner = createCleaner(native) { nativeHeap.free(it) }
+
     var value: Float
         get() = native.value
         set(v) { native.value = v }
+
     internal val ptr get() = native.ptr
 }
 
@@ -1269,6 +1296,9 @@ fun dropdownCustom(
 fun tab(selected: IntState): ContainerComponent =
     ContainerComponent(ftxui_component_container_tab(selected.ptr)!!)
 
+internal fun tab(selected: CPointer<IntVar>): ContainerComponent =
+    ContainerComponent(ftxui_component_container_tab(selected)!!)
+
 fun stacked(): ContainerComponent =
     ContainerComponent(ftxui_component_container_stacked()!!)
 
@@ -1526,6 +1556,8 @@ class Canvas internal constructor(private val handle: ftxui_canvas_handle_t) {
         val refs = mutableListOf<StableRef<*>>()
     }
     private val resources = Resources(handle)
+
+    @Suppress("unused")
     private val cleaner = createCleaner(resources) { res ->
         res.refs.forEach { it.dispose() }
         ftxui_canvas_destroy(res.handle)
@@ -1622,6 +1654,7 @@ fun graph(fn: GraphFn): Element {
 // -- LinearGradient
 
 class LinearGradient internal constructor(internal val handle: ftxui_linear_gradient_handle_t) {
+    @Suppress("unused")
     private val cleaner = createCleaner(handle) { ftxui_linear_gradient_destroy(it) }
 
     fun angle(degrees: Float): LinearGradient { ftxui_linear_gradient_angle(handle, degrees); return this }

@@ -4,41 +4,35 @@ Kotlin/Native bindings for [ftxui](https://github.com/ArthurSonzogni/FTXUI), a C
 
 Full API reference: **[docs/](docs/)**
 
-## Modules
+## Package
 
-| Module | Package | Description |
-|---|---|---|
-| `ftxui-kt` | `nl.ncaj.ftxui` | Low-level Kotlin wrapper over the ftxui C API |
-| `ftxui-kt-dsl` | `nl.ncaj.ftxui.dsl` | Idiomatic Kotlin DSL — no state objects, no manual memory management |
+All library components are provided under a single package, `nl.ncaj.ftxui`. This contains both the low-level wrapper over the FTXUI C API and the high-level idiomatic Kotlin DSL.
 
 ## Quick start
 
 ```kotlin
 import nl.ncaj.ftxui.*
-import nl.ncaj.ftxui.dsl.*
-
-// State vars must be class or top-level properties, not local variables.
-// See "State" section below for details.
-var checked = false
-var selected = 0
-var inputText = ""
 
 fun main() = fullscreenApp {
+    val checked = boolState(false)
+    val selected = intState(0)
+    val inputText = stringState("")
+
     val menu = vertical {
-        +checkbox("Enable feature", ::checked)
-        +input(::inputText, "type here…")
-        +menu(listOf("Option A", "Option B", "Option C"), ::selected)
-        +button("Quit", onClick = { exit() })
+        checkbox("Enable feature", checked)
+        input(inputText, "type here…")
+        menu(listOf("Option A", "Option B", "Option C"), selected)
+        button("Quit") { exit() }
     }
 
     renderer(child = menu) {
         vbox {
             +menu.render()
-            +separator()
-            +hbox {
-                +text("Checked: $checked  ")
-                +text("Selected: $selected  ")
-                +text("Input: $inputText")
+            separator()
+            hbox {
+                text("Checked: ${checked.value}  ")
+                text("Selected: ${selected.value}  ")
+                text("Input: ${inputText.value}")
             }
         }
     }
@@ -51,33 +45,20 @@ fun main() = fullscreenApp {
 - Linux ARM64
 - macOS ARM64
 
-## Using the modules
-
-### ftxui-kt-dsl (recommended)
+## Installation
 
 Add to your `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("nl.ncaj.ftxui:ftxui-kt-dsl:<version>")
-}
-```
-
-Import both packages:
-
-```kotlin
-import nl.ncaj.ftxui.*       // element factories, decorators, Color, Key, etc.
-import nl.ncaj.ftxui.dsl.*   // app entry points, container/element builders
-```
-
-### ftxui-kt (low-level)
-
-Use directly if you need full control over resource lifetimes:
-
-```kotlin
-dependencies {
     implementation("nl.ncaj.ftxui:ftxui-kt:<version>")
 }
+```
+
+Import the package:
+
+```kotlin
+import nl.ncaj.ftxui.*
 ```
 
 ## DSL overview
@@ -97,8 +78,35 @@ The block's last expression is the root component. The `AppScope` receiver provi
 
 ### State
 
-Components that hold mutable state (inputs, checkboxes, menus, sliders, etc.) take a
-`KMutableProperty0<T>` via `::` syntax so the DSL can read and write your variable directly.
+Interactive components (checkbox, slider, menu, input, etc.) hold state using explicit state objects (`BoolState`, `IntState`, `StringState`, `FloatState`). 
+
+Inside app builder blocks (like `fullscreenApp { ... }`), you can use the `AppScope` extension functions `boolState()`, `intState()`, `stringState()`, and `floatState()` to instantiate state. State created this way is automatically kept alive for the duration of the app loop and released via Kotlin's `Cleaner` mechanism when the app exits (requiring no manual memory management):
+
+```kotlin
+import nl.ncaj.ftxui.*
+
+fun main() = fullscreenApp {
+    val count = intState(0)
+    val label = stringState("")
+    val enabled = boolState(false)
+
+    vertical {
+        slider("Count", count, 0, 100)
+        input(label, "enter label…")
+        checkbox("Enabled", enabled)
+        button("Reset") {
+            count.value = 0
+            label.value = ""
+        }
+    }
+}
+```
+
+If you instantiate state objects manually outside of an app builder using their constructors (e.g. `val state = BoolState(false)`), you are responsible for calling `state.free()` when the state is no longer needed.
+
+#### Property reference syntax & Kotlin/Native limitation
+
+Alternatively, if your state already lives in standard Kotlin variables, you can pass property references (`::`) to the component functions. The native buffers are created and freed automatically:
 
 ```kotlin
 // Top-level or class member properties
@@ -108,71 +116,126 @@ var enabled = false
 
 fun main() = fullscreenApp {
     vertical {
-        +slider("Count", ::count, 0, 100)
-        +input(::label, "enter label…")
-        +checkbox("Enabled", ::enabled)
-        +button("Reset", onClick = { count = 0; label = "" })
+        slider("Count", ::count, 0, 100)
+        input(::label, "enter label…")
+        checkbox("Enabled", ::enabled)
+        button("Reset") { count = 0; label = "" }
     }
 }
 ```
 
 > **Kotlin/Native limitation:** `::` references to *local variables* (variables declared inside
 > a function or lambda body) are [not yet supported](https://youtrack.jetbrains.com/issue/KT-15360)
-> in Kotlin/Native. State variables must be **top-level** or **class member** properties.
+> in Kotlin/Native. If you use the property reference syntax, the state variables must be **top-level** or **class member** properties.
 > This is a Kotlin/Native compiler restriction, not specific to this library.
 
 ### Button trailing lambda
 
-Because `button` has a third `options` parameter after `onClick`, Kotlin's trailing lambda
-syntax does not apply when the call is prefixed with `+`. Use a named argument instead:
+Inside container blocks (such as `vertical` or `horizontal`), the DSL provides extension functions that put the `onClick` handler as the last parameter, allowing clean trailing lambda usage directly:
 
 ```kotlin
-// Correct
-+button("Click me", onClick = { doSomething() })
+vertical {
+    button("Click me") { doSomething() }
+}
+```
 
-// Also correct (explicit parentheses)
-+(button("Click me") { doSomething() })
+If you use the standalone `button` function outside of a container block (which returns a `Component` that you might add manually later), both `button(label, onClick)` and `button(label, options, onClick)` overloads are provided, meaning trailing lambdas work here as well:
 
-// Wrong — the lambda is parsed as a separate expression, not as onClick
-+button("Click me") { doSomething() }
+```kotlin
+val btn = button("Click me") { doSomething() }
 ```
 
 ### Container builders
 
+Inside container blocks (like `vertical`, `horizontal`, etc.), components created via DSL extension functions (such as `button`, `checkbox`, `input`, `slider`, etc.) are automatically added to the container without needing the unary `+` operator.
+
+For external components, you can add them using the unary `+` operator or `.add()`:
+
 ```kotlin
-vertical { +comp1; +comp2 }          // stacks components vertically
-horizontal { +comp1; +comp2 }        // stacks components horizontally
-stacked { +comp1; +comp2 }           // overlays components (z-axis)
-tab(::selectedIndex) { +comp1; +comp2 }  // tabbed container
+vertical {
+    // DSL components add themselves automatically:
+    checkbox("Enable feature", checked)
+    button("Quit") { exit() }
+
+    // External or custom components use '+' or '.add()':
+    +myCustomComponent
+    anotherComponent.add()
+}
+```
+
+Available container blocks:
+```kotlin
+vertical { ... }                      // stacks components vertically
+horizontal { ... }                    // stacks components horizontally
+stacked { ... }                       // overlays components (z-axis)
+tab(::selectedIndex) { ... }          // tabbed container (can also take tab(selectedState) { ... })
 ```
 
 ### Element builders
 
+Just like containers, element builders (like `vbox`, `hbox`, etc.) provide DSL extension functions (such as `text`, `separator`, `gauge`, `paragraph`) that add the elements automatically. External or custom elements can be added with `+`:
+
 ```kotlin
-vbox { +text("Hello"); +gauge(0.5) }
-hbox { +text("A"); +separator(); +text("B") }
-dbox { +background; +foreground }    // depth-stacked elements
+vbox {
+    text("Hello")
+    gauge(0.5)
+}
+hbox {
+    text("A")
+    separator()
+    text("B")
+}
+dbox {
+    // External/custom elements use '+'
+    +background
+    +foreground
+}
+```
+
+### Custom DSL extensions
+
+Consumers of the library can easily write their own extension functions on `ContainerScope` or `ElementScope` to integrate custom components or elements seamlessly into the DSL style:
+
+```kotlin
+// Custom component extension on ContainerScope
+fun ContainerScope.myWidget(title: String, checked: BoolState, onClick: () -> Unit) =
+    vertical {
+        checkbox(title, checked)
+        button("Click me", onClick)
+    }.add()
+
+// Custom element extension on ElementScope
+fun ElementScope.redHeader(title: String) =
+    text(title) { bold().color(Color.Red) }
 ```
 
 ### Advanced
 
+Most elements and components also have overloads that work directly inside their respective scope builders:
+
 ```kotlin
-// Canvas drawing
-val el = canvas(80, 24) {
-    drawText(0, 0, "Hello")
-    drawPointCircle(40, 12, 8, Color.Red)
+vbox {
+    // Canvas drawing directly in ElementScope
+    canvas(80, 24) {
+        drawText(0, 0, "Hello")
+        drawPointCircle(40, 12, 8, Color.Red)
+    }
+
+    // Tables directly in ElementScope
+    table(listOf(listOf("Name", "Age"), listOf("Alice", "30"))) {
+        selectAll { border() }
+        selectRow(0) { decorateBold().decorateCellsColor(Color.Blue) }
+    }
+
+    // Graph directly in ElementScope
+    val fn = graphFn { w, h, out -> repeat(w) { out[it] = (h * it / w) } }
+    graph(fn)
 }
+```
 
-// Tables — selections use a lambda block
-val el = table(listOf(listOf("Name", "Age"), listOf("Alice", "30"))) {
-    selectAll { border() }
-    selectRow(0) { decorateBold().decorateCellsColor(Color.Blue) }
-}
+Standalone elements can still be created and decorated directly:
 
-// Graph
-val fn = graphFn { w, h, out -> repeat(w) { out[it] = (h * it / w) } }
-val el = graph(fn)
-
+```kotlin
 // Linear gradient
 val grad = linearGradient { angle(45f); stop(Color.Red); stop(Color.Blue) }
 val el = text("Gradient").colorLinearGradient(grad)
@@ -180,12 +243,15 @@ val el = text("Gradient").colorLinearGradient(grad)
 
 ## Building from source
 
+Build the library for your host platform using Gradle:
+
 ```bash
-./gradlew :ftxui-kt:compileKotlinLinuxX64
-./gradlew :ftxui-kt-dsl:compileKotlinLinuxX64
+./gradlew compileKotlinLinuxX64
+# or
+./gradlew compileKotlinMacosArm64
 ```
 
-The `ftxui-c` pre-built archive is downloaded automatically on first build.
+The `ftxui-c` pre-built archive is downloaded and extracted automatically on first build.
 
 ## License
 

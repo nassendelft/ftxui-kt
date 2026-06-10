@@ -3,7 +3,7 @@ name: Publish ftxui-kt
 on:
   push:
     tags:
-      - 'ftxui-kt/v*'
+      - 'v*'
 
 jobs:
   publish:
@@ -31,10 +31,10 @@ jobs:
 
       - name: Extract version from tag
         id: version
-        run: echo "version=${GITHUB_REF_NAME#ftxui-kt/v}" >> $GITHUB_OUTPUT
+        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
 
       - name: Publish platform artifact
-        run: ./gradlew :ftxui-kt:${{ matrix.platform_task }} -PpublishVersion=${{ steps.version.outputs.version }}
+        run: ./gradlew ${{ matrix.platform_task }} -PpublishVersion=${{ steps.version.outputs.version }}
         env:
           SONATYPE_AUTH_TOKEN: ${{ secrets.SONATYPE_AUTH_TOKEN }}
           PGP_KEY: ${{ secrets.PGP_KEY }}
@@ -42,7 +42,7 @@ jobs:
 
       - name: Publish multiplatform metadata
         if: matrix.publish_metadata
-        run: ./gradlew :ftxui-kt:publishKotlinMultiplatformPublicationToSonatype -PpublishVersion=${{ steps.version.outputs.version }}
+        run: ./gradlew publishKotlinMultiplatformPublicationToSonatype -PpublishVersion=${{ steps.version.outputs.version }}
         env:
           SONATYPE_AUTH_TOKEN: ${{ secrets.SONATYPE_AUTH_TOKEN }}
           PGP_KEY: ${{ secrets.PGP_KEY }}

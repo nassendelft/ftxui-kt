@@ -74,19 +74,20 @@ val component = renderer(layout) {
 }
 ```
 
-## Named argument note
+## Trailing lambda support
 
-Because `button` has a third `options` parameter after `onClick`, Kotlin's trailing lambda syntax does not work when the call is prefixed with `+` in DSL contexts. Use a named argument instead:
+Inside container blocks (such as `vertical` or `horizontal`), the DSL provides extension functions that put the `onClick` handler as the last parameter, allowing clean trailing lambda usage directly:
 
 ```kotlin
-// Correct
-+button("Click me", onClick = { doSomething() })
+vertical {
+    button("Click me") { doSomething() }
+}
+```
 
-// Also correct (explicit parentheses)
-+(button("Click me") { doSomething() })
+Outside of container blocks, both `button(label, onClick)` and `button(label, options, onClick)` overloads are provided, meaning trailing lambdas work here as well:
 
-// Wrong — the lambda is parsed as a separate expression, not as onClick
-+button("Click me") { doSomething() }
+```kotlin
+val btn = button("Click me") { doSomething() }
 ```
 
 ## Memory

@@ -128,3 +128,23 @@ renderer(myComponent) {
     ).border()
 }
 ```
+
+## Element DSL pattern
+
+Alternatively, using the Element DSL scope functions, you can write a cleaner nested hierarchy without commas:
+
+```kotlin
+renderer(myComponent) {
+    vbox {
+        text("Title") { bold().hcenter() }
+        separator()
+        hbox {
+            text("Left") { flex() }
+            separatorLight()
+            text("Right") { flex() }
+        }
+        gauge(progress) { flex() }
+    }.border()
+}
+```
+
