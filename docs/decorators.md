@@ -100,6 +100,29 @@ element.focusCursorUnderline()
 element.focusCursorUnderlineBlinking()
 ```
 
+## Layout measurement (reflect)
+
+`Box` is a mutable rectangle that the layout writes into on every render. Wrap an element with `reflect(box)` to record where it ended up and how much space it was given — the building block for virtualized lists that need to know their viewport size, or for hit-testing.
+
+```kotlin
+val box = Box()
+
+renderer {
+    // Stretch the element so the recorded box reports the slot size
+    // rather than the content's natural size:
+    vbox(/* visible rows only */).flex().reflect(box)
+}
+
+// After a frame has been rendered:
+box.height                              // rows assigned by the layout
+box.width                               // columns assigned by the layout
+box.xMin; box.xMax; box.yMin; box.yMax  // inclusive coordinates
+```
+
+`width`/`height` are `0` until the element has been rendered once. Layout runs after your render callback, so the values describe the *previous* frame; when a slot can change size (terminal resize, panels appearing), re-render once to converge on the new measurement.
+
+Keep the `Box` reachable (e.g. captured in the component's render lambda) for as long as elements reflecting into it are rendered — the native box must outlive them.
+
 ## Selection styling
 
 ```kotlin

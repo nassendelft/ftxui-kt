@@ -241,6 +241,22 @@ val grad = linearGradient { angle(45f); stop(Color.Red); stop(Color.Blue) }
 val el = text("Gradient").colorLinearGradient(grad)
 ```
 
+### Measuring layout (reflect)
+
+A `Box` records the rectangle the layout assigns to an element on every render — the building block for components that size their content to the space they actually receive (virtualized lists, pagers):
+
+```kotlin
+val box = Box()
+
+renderer {
+    vbox(/* visible rows only */).flex().reflect(box)
+}
+
+// After a frame has rendered, box.width / box.height hold the assigned size.
+```
+
+See [docs/decorators.md](docs/decorators.md#layout-measurement-reflect) for details and lifetime rules.
+
 ## Building from source
 
 Build the library for your host platform using Gradle:

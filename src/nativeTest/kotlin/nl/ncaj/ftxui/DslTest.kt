@@ -82,4 +82,13 @@ class DslTest {
             }
         }
     }
+
+    @Test
+    fun testCtrlKeysMatching() {
+        val eventCtrlD = FtxUIEvent.Other(input = Key.CtrlD, debugString = "Event::CtrlD")
+        val eventCtrlU = FtxUIEvent.Other(input = Key.CtrlU, debugString = "Event::CtrlU")
+
+        kotlin.test.assertTrue(eventCtrlD.isKey(Key.CtrlD))
+        kotlin.test.assertTrue(eventCtrlU.isKey(Key.CtrlU))
+    }
 }

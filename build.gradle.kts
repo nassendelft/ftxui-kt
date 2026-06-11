@@ -1,3 +1,4 @@
+import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
@@ -6,6 +7,8 @@ plugins {
     kotlin("multiplatform") version "2.3.21"
     id("publishing-conventions")
 }
+
+group = "nl.ncaj.ftxui"
 
 publishing {
     publications.withType<MavenPublication>().all {
@@ -25,7 +28,7 @@ val nativeTargetName = (findProperty("native.target") as String?)
         else -> error("Unsupported host OS: $hostOs ($hostArch)")
     }
 
-val ftxuiCVersion = "v1.0.5"
+val ftxuiCVersion = "v1.2.0"
 
 val ftxuiCPlatform = when {
     hostOs.startsWith("Linux") -> "linux-x86_64"
@@ -63,11 +66,37 @@ val downloadFtxuiC = tasks.register("downloadFtxuiC") {
     }
 }
 
-val extractFtxuiC = tasks.register<Exec>("extractFtxuiC") {
-    dependsOn(downloadFtxuiC)
-    inputs.file(archiveFile)
+val extractFtxuiC = tasks.register("extractFtxuiC") {
+    val srcDir = file("../ftxui-c")
+    val destDir = nativeDir.map { it.asFile }
     outputs.dir(nativeDir.map { it.dir("lib") })
-    commandLine("tar", "-xzf", archiveFile.get().asFile.absolutePath, "-C", nativeDir.get().asFile.absolutePath)
+    doLast {
+        val dest = destDir.get()
+        dest.mkdirs()
+        File(dest, "include").mkdirs()
+        File(dest, "lib").mkdirs()
+        
+        copy {
+            from(File(srcDir, "ftxui_c_api.h"))
+            into(File(dest, "include"))
+        }
+        copy {
+            from(File(srcDir, "build/libftxui_c_binding.a"))
+            into(File(dest, "lib"))
+        }
+        copy {
+            from(File(srcDir, "build/ftxui_build/libftxui-component.a"))
+            into(File(dest, "lib"))
+        }
+        copy {
+            from(File(srcDir, "build/ftxui_build/libftxui-dom.a"))
+            into(File(dest, "lib"))
+        }
+        copy {
+            from(File(srcDir, "build/ftxui_build/libftxui-screen.a"))
+            into(File(dest, "lib"))
+        }
+    }
 }
 
 kotlin {

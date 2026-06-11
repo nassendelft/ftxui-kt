@@ -10,7 +10,7 @@ Kotlin/Native bindings for [FTXUI](https://github.com/ArthurSonzogni/FTXUI). See
 | [state](state.md) | `BoolState`, `IntState`, `StringState`, `FloatState` — native-backed mutable state |
 | [renderer](renderer.md) | `renderer()`, `focusableRenderer()`, `decorateRender()`, `catchEvent()` |
 | [elements](elements.md) | `text`, `gauge`, `separator`, `vbox`, `hbox`, `paragraph`, `spinner`, and more |
-| [decorators](decorators.md) | Border, color, text style, flex, size, alignment, scroll, and focus decorators |
+| [decorators](decorators.md) | Border, color, text style, flex, size, alignment, scroll, focus, and layout-measurement (`reflect`) decorators |
 | [containers](containers.md) | `horizontal`, `vertical`, `tab`, `stacked`, `collapsible`, `maybe`, `modal`, `resizableSplit` |
 | [color](color.md) | `Color` — palette constants, RGB/HSV constructors, interpolation, blending |
 | [keyboard](keyboard.md) | `Key` — constants for arrow keys, function keys, Ctrl/Alt combinations |

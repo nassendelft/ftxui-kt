@@ -104,7 +104,7 @@ These are internal rendering primitives. Omitting them from the Kotlin API is in
 
 | ftxui C++ | Kotlin (ftxui-kt) | Status | Notes |
 |---|---|---|---|
-| `Box` struct | — | — | Internal; not needed for API parity |
+| `Box` struct | `Box` | ✅ | Mutable rectangle written by the layout; for use with `Element.reflect(box)`. `xMin`/`xMax`/`yMin`/`yMax` plus `width`/`height` (0 until first render) |
 | `Cell` struct | — | — | Internal; used indirectly via `selectionStyle` C callback |
 | `Surface` class | — | — | Internal |
 | `Screen` class | — | — | Internal |
@@ -224,7 +224,7 @@ These are internal rendering primitives. Omitting them from the Kotlin API is in
 | `focusCursorUnderlineBlinking(Element)` | `Element.focusCursorUnderlineBlinking()` | ✅ | |
 | `vscroll_indicator(Element)` | `Element.vscrollIndicator()` | ✅ | |
 | `hscroll_indicator(Element)` | `Element.hscrollIndicator()` | ✅ | |
-| `reflect(Box&)(Element)` | — | ❌ | `Box` not exposed |
+| `reflect(Box&)(Element)` | `Element.reflect(box: Box)` | ✅ | Records the layout rectangle assigned to the element into the `Box` on every render |
 | `clear_under(Element)` | `Element.clearUnder()` | ✅ | |
 | `hcenter(Element)` | `Element.hcenter()` | ✅ | |
 | `vcenter(Element)` | `Element.vcenter()` | ✅ | |
@@ -661,8 +661,9 @@ Counts exclude items marked `—` (not applicable / intentional design differenc
 | Color | 16 | 1 | 1 |
 | ColorInfo | 10 | 0 | 0 |
 | Terminal | 9 | 0 | 3 |
+| Screen low-level (Box) | 1 | 0 | 0 |
 | Element widgets | 37 | 4 | 5 |
-| Element decorators | 40 | 2 | 3 |
+| Element decorators | 41 | 2 | 2 |
 | Canvas | 39 | 3 | 6 |
 | FlexboxConfig | 7 | 0 | 6 |
 | LinearGradient | 5 | 0 | 0 |
@@ -677,7 +678,7 @@ Counts exclude items marked `—` (not applicable / intentional design differenc
 | Component factories | 30 | 4 | 11 |
 | Component options structs | 23 | 3 | 17 |
 | Util | 0 | 0 | 1 |
-| **Total** | **355** | **23** | **73** |
+| **Total** | **357** | **23** | **72** |
 
 ### Top gaps by impact
 
@@ -691,3 +692,5 @@ Counts exclude items marked `—` (not applicable / intentional design differenc
 8. **`window(title, content, border)` element** — C API `ftxui_element_window` does not accept a border style parameter.
 
 *Implemented in passes 1 & 2: all Loop, App factory/control, Mouse, Terminal, LinearGradient, Canvas, Table, easing functions, component callbacks (on_change/on_enter), InputOptions, Hoverable lambda forms, Maybe predicate, App terminal info, all FtxUIEvent fields.*
+
+*Implemented in pass 3 (ftxui-c v1.2.0): `Box` + `Element.reflect(box)` for layout-rectangle measurement.*

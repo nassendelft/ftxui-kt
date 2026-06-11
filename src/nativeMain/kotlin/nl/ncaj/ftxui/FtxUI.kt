@@ -338,6 +338,31 @@ fun Element.focusCursorBarBlinking() = Element(ftxui_element_focus_cursor_bar_bl
 fun Element.focusCursorUnderline() = Element(ftxui_element_focus_cursor_underline(this.handle)!!)
 fun Element.focusCursorUnderlineBlinking() = Element(ftxui_element_focus_cursor_underline_blinking(this.handle)!!)
 
+// Mutable rectangle written by the layout each time an element wrapped with
+// Element.reflect(box) is rendered. Coordinates are inclusive; width/height
+// are 0 until the element has been rendered once. The native box must outlive
+// every element reflecting into it, so keep the Box reachable (e.g. captured
+// in the component's render lambda) for as long as such elements are rendered.
+class Box {
+    internal val handle = ftxui_box_create()!!
+
+    @Suppress("unused")
+    private val cleaner = createCleaner(handle) { ftxui_box_destroy(it) }
+
+    val xMin: Int get() = ftxui_box_x_min(handle)
+    val xMax: Int get() = ftxui_box_x_max(handle)
+    val yMin: Int get() = ftxui_box_y_min(handle)
+    val yMax: Int get() = ftxui_box_y_max(handle)
+    val width: Int get() = ftxui_box_width(handle)
+    val height: Int get() = ftxui_box_height(handle)
+}
+
+// Records the layout rectangle assigned to this element into [box] on every
+// render (ftxui::reflect). To measure the space available in a slot rather
+// than the element's natural size, combine with a flex decorator (e.g.
+// yflex()) so the element is stretched to fill the slot.
+fun Element.reflect(box: Box) = Element(ftxui_element_reflect(this.handle, box.handle)!!)
+
 // -- Elements
 
 fun text(text: String) = Element(ftxui_element_text(text)!!)
@@ -790,6 +815,17 @@ object Key {
 
 fun Component.catchEvent(handler: (FtxUIEvent) -> Boolean): Component {
     val stableRef = StableRef.create(handler)
+    val callback = createCatchEventCallback()
+    return Component(ftxui_component_catch_event(handle, callback, stableRef.asCPointer(), stableRefDestructor)!!)
+}
+
+fun Component.postCatchEvent(handler: (FtxUIEvent) -> Boolean): Component {
+    val stableRef = StableRef.create(handler)
+    val callback = createCatchEventCallback()
+    return Component(ftxui_component_post_catch_event(handle, callback, stableRef.asCPointer(), stableRefDestructor)!!)
+}
+
+private fun createCatchEventCallback(): CPointer<CFunction<(ftxui_event_handle_t?, COpaquePointer?) -> Boolean>> {
     val callback = staticCFunction { eventHandle: ftxui_event_handle_t?, refPtr: COpaquePointer? ->
         val block = refPtr!!.asStableRef<(FtxUIEvent) -> Boolean>().get()
         val input = ftxui_event_input(eventHandle)?.toKString() ?: ""
@@ -800,6 +836,7 @@ fun Component.catchEvent(handler: (FtxUIEvent) -> Boolean): Component {
                 debugString = debugString,
                 character = ftxui_event_character(eventHandle)?.toKString() ?: "",
             )
+
             ftxui_event_is_mouse(eventHandle) -> FtxUIEvent.Mouse(
                 input = input,
                 debugString = debugString,
@@ -811,40 +848,46 @@ fun Component.catchEvent(handler: (FtxUIEvent) -> Boolean): Component {
                 meta = ftxui_event_mouse_meta(eventHandle),
                 control = ftxui_event_mouse_control(eventHandle),
             )
+
             ftxui_event_is_cursor_position(eventHandle) -> FtxUIEvent.CursorPosition(
                 input = input,
                 debugString = debugString,
                 x = ftxui_event_cursor_x(eventHandle),
                 y = ftxui_event_cursor_y(eventHandle),
             )
+
             ftxui_event_is_cursor_shape(eventHandle) -> FtxUIEvent.CursorShape(
                 input = input,
                 debugString = debugString,
                 shape = ftxui_event_cursor_shape(eventHandle),
             )
+
             ftxui_event_is_terminal_name_version(eventHandle) -> FtxUIEvent.TerminalNameVersion(
                 input = input,
                 debugString = debugString,
                 name = ftxui_event_terminal_name(eventHandle)?.toKString() ?: "",
                 version = ftxui_event_terminal_version(eventHandle),
             )
+
             ftxui_event_is_terminal_emulator(eventHandle) -> FtxUIEvent.TerminalEmulator(
                 input = input,
                 debugString = debugString,
                 name = ftxui_event_terminal_emulator_name(eventHandle)?.toKString() ?: "",
                 version = ftxui_event_terminal_emulator_version(eventHandle)?.toKString() ?: "",
             )
+
             ftxui_event_is_terminal_capabilities(eventHandle) -> memScoped {
                 val count = alloc<IntVar>()
                 val ptr = ftxui_event_terminal_capabilities(eventHandle, count.ptr)
                 val caps = if (ptr != null) (0 until count.value).map { ptr[it] } else emptyList()
                 FtxUIEvent.TerminalCapabilities(input = input, debugString = debugString, capabilities = caps)
             }
+
             else -> FtxUIEvent.Other(input = input, debugString = debugString)
         }
         block(e)
     }
-    return Component(ftxui_component_catch_event(handle, callback, stableRef.asCPointer(), stableRefDestructor)!!)
+    return callback
 }
 
 // Wraps `inner` with a Renderer that bidirectionally syncs a Kotlin property with a
