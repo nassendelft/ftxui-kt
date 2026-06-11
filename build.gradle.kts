@@ -68,33 +68,52 @@ val downloadFtxuiC = tasks.register("downloadFtxuiC") {
 
 val extractFtxuiC = tasks.register("extractFtxuiC") {
     val srcDir = file("../ftxui-c")
+    val localApiHeader = File(srcDir, "ftxui_c_api.h")
+    val useLocal = localApiHeader.exists()
+
+    if (useLocal) {
+        inputs.dir(srcDir)
+    } else {
+        dependsOn(downloadFtxuiC)
+        inputs.file(archiveFile)
+    }
+
     val destDir = nativeDir.map { it.asFile }
     outputs.dir(nativeDir.map { it.dir("lib") })
+
     doLast {
         val dest = destDir.get()
         dest.mkdirs()
-        File(dest, "include").mkdirs()
-        File(dest, "lib").mkdirs()
-        
-        copy {
-            from(File(srcDir, "ftxui_c_api.h"))
-            into(File(dest, "include"))
-        }
-        copy {
-            from(File(srcDir, "build/libftxui_c_binding.a"))
-            into(File(dest, "lib"))
-        }
-        copy {
-            from(File(srcDir, "build/ftxui_build/libftxui-component.a"))
-            into(File(dest, "lib"))
-        }
-        copy {
-            from(File(srcDir, "build/ftxui_build/libftxui-dom.a"))
-            into(File(dest, "lib"))
-        }
-        copy {
-            from(File(srcDir, "build/ftxui_build/libftxui-screen.a"))
-            into(File(dest, "lib"))
+
+        if (useLocal) {
+            logger.lifecycle("Using local ftxui-c repository at ${srcDir.absolutePath}")
+            File(dest, "include").mkdirs()
+            File(dest, "lib").mkdirs()
+            copy {
+                from(File(srcDir, "ftxui_c_api.h"))
+                into(File(dest, "include"))
+            }
+            copy {
+                from(File(srcDir, "build/libftxui_c_binding.a"))
+                into(File(dest, "lib"))
+            }
+            copy {
+                from(File(srcDir, "build/ftxui_build/libftxui-component.a"))
+                into(File(dest, "lib"))
+            }
+            copy {
+                from(File(srcDir, "build/ftxui_build/libftxui-dom.a"))
+                into(File(dest, "lib"))
+            }
+            copy {
+                from(File(srcDir, "build/ftxui_build/libftxui-screen.a"))
+                into(File(dest, "lib"))
+            }
+        } else {
+            logger.lifecycle("Extracting downloaded ftxui-c archive from ${archiveFile.get().asFile.absolutePath}")
+            exec {
+                commandLine("tar", "-xzf", archiveFile.get().asFile.absolutePath, "-C", dest.absolutePath)
+            }
         }
     }
 }
