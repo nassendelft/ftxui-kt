@@ -111,9 +111,9 @@ val extractFtxuiC = tasks.register("extractFtxuiC") {
             }
         } else {
             logger.lifecycle("Extracting downloaded ftxui-c archive from ${archiveFile.get().asFile.absolutePath}")
-            exec {
+            project.providers.exec {
                 commandLine("tar", "-xzf", archiveFile.get().asFile.absolutePath, "-C", dest.absolutePath)
-            }
+            }.result.get()
         }
     }
 }
