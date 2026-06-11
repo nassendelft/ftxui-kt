@@ -19,7 +19,7 @@ publishing {
             archiveBaseName.set("${project.name}-${name.capitalize()}")
             archiveClassifier.set("javadoc")
         }
-
+        groupId = "nl.ncaj.ftxui"
         artifact(javaDocTask)
         pom {
             name.set("${groupId}:${artifactId}")
